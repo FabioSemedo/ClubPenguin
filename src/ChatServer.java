@@ -6,273 +6,348 @@ import java.nio.charset.*;
 import java.util.*;
 
 public class ChatServer {
+    private static final int DEFAULT_PORT = 8000;
+    
+    // Core Server Components
+    private Selector selector;
+    private ServerSocketChannel serverChannel;
+    private final RoomManager roomManager = new RoomManager();
+    
+    // Lookup table for fast access to users by nickname (for /priv and uniqueness checks)
+    private final Map<String, ClientContext> activeUsers = new HashMap<>();
 
-    // Context to track state for each connected client
-    static class ClientContext {
-        enum State { INIT, OUTSIDE, INSIDE }
+    public static void main(String[] args) {
+        int port;
+
+        if(!(args.length > 0)){
+            System.out.println(
+                "[Server Main] Missing expected arguments:\nChatServer <port>\nUsing default: "
+                +ChatServer.DEFAULT_PORT);
+
+            port = ChatServer.DEFAULT_PORT;
+        }else{
+            port = Integer.parseInt(args[0]);
+        }
         
-        public State state = State.INIT;
-        public String nickname = null;
-        public String room = null;
-        // Buffer to accumulate partial data until a full line is received
-        public StringBuilder buffer = new StringBuilder();
+        try {
+            new ChatServer().run(port);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
-    // A pre-allocated buffer for data transfer
-    static private final ByteBuffer readBuffer = ByteBuffer.allocate(16384);
-    static private final Charset charset = StandardCharsets.UTF_8;
-    static private final CharsetDecoder decoder = charset.newDecoder();
+    public void run(int port) throws IOException {
+        // 1. Setup Network
+        selector = Selector.open();
+        serverChannel = ServerSocketChannel.open();
+        serverChannel.configureBlocking(false);
+        serverChannel.bind(new InetSocketAddress(port));
+        serverChannel.register(selector, SelectionKey.OP_ACCEPT);
 
-    static public void main(String args[]) throws Exception {
-        if (args.length < 1) {
-            System.err.println("Usage: java ChatServer <port>");
-            return;
-        }
+        System.out.println("ChatServer started on port " + port);
 
-        int port = Integer.parseInt(args[0]);
+        // 2. Main Loop
+        while (true) {
+            if (selector.select() == 0) continue;
 
-        try {
-            // Setup ServerSocketChannel
-            ServerSocketChannel ssc = ServerSocketChannel.open();
-            ssc.configureBlocking(false);
-            ServerSocket ss = ssc.socket();
-            ss.bind(new InetSocketAddress(port));
+            Iterator<SelectionKey> it = selector.selectedKeys().iterator();
+            while (it.hasNext()) {
+                SelectionKey key = it.next();
+                it.remove();
 
-            // Setup Selector
-            Selector selector = Selector.open();
-            ssc.register(selector, SelectionKey.OP_ACCEPT);
-            System.out.println("ChatServer started on port " + port);
-
-            while (true) {
-                if (selector.select() == 0) continue;
-
-                Set<SelectionKey> keys = selector.selectedKeys();
-                Iterator<SelectionKey> it = keys.iterator();
-
-                while (it.hasNext()) {
-                    SelectionKey key = it.next();
-                    it.remove();
-
+                try {
                     if (key.isAcceptable()) {
-                        // Accept new connection
-                        Socket s = ss.accept();
-                        System.out.println("New connection: " + s);
-                        SocketChannel sc = s.getChannel();
-                        sc.configureBlocking(false);
-                        
-                        // Register for reading and attach a new ClientContext
-                        SelectionKey newKey = sc.register(selector, SelectionKey.OP_READ);
-                        newKey.attach(new ClientContext());
-
+                        handleAccept();
                     } else if (key.isReadable()) {
-                        SocketChannel sc = null;
-                        try {
-                            sc = (SocketChannel) key.channel();
-                            processInput(sc, key, selector);
-                        } catch (IOException ie) {
-                            // Handle abrupt disconnection
-                            closeConnection(key, selector);
-                        }
+                        handleRead(key);
                     }
+                } catch (IOException e) {
+                    handleDisconnect(key);
                 }
             }
-        } catch (IOException ie) {
-            System.err.println(ie);
         }
     }
 
-    // Read data, reconstruct lines, and process commands
-    static private void processInput(SocketChannel sc, SelectionKey key, Selector selector) throws IOException {
-        readBuffer.clear();
-        int numBytes = sc.read(readBuffer);
+    // --- Network Events ---
 
-        if (numBytes == -1) {
-            closeConnection(key, selector);
+    private void handleAccept() throws IOException {
+        SocketChannel sc = serverChannel.accept();
+        sc.configureBlocking(false);
+        SelectionKey key = sc.register(selector, SelectionKey.OP_READ);
+        
+        // Attach our Object-Oriented wrapper to the key
+        ClientContext client = new ClientContext(key, sc);
+        key.attach(client);
+        
+        System.out.println("New connection: " + sc.getRemoteAddress());
+    }
+
+    private void handleRead(SelectionKey key) throws IOException {
+        ClientContext client = (ClientContext) key.attachment();
+        
+        // Delegate reading to the client object
+        if (!client.read()) {
+            handleDisconnect(key);
             return;
         }
 
-        readBuffer.flip();
-        String fragment = decoder.decode(readBuffer).toString();
-        ClientContext ctx = (ClientContext) key.attachment();
-        ctx.buffer.append(fragment);
-
-        // Process line by line
-        while (true) {
-            int newlineIdx = ctx.buffer.indexOf("\n");
-            if (newlineIdx == -1) break;
-
-            String line = ctx.buffer.substring(0, newlineIdx).trim();
-            ctx.buffer.delete(0, newlineIdx + 1);
-
+        // Process all complete messages in the buffer
+        while (client.hasFullMessage()) {
+            String line = client.nextMessage();
             if (!line.isEmpty()) {
-                handleCommand(key, ctx, line, selector);
+                processCommand(client, line);
             }
         }
     }
 
-    // Core logic for the protocol state machine
-    static private void handleCommand(SelectionKey key, ClientContext ctx, String line, Selector selector) throws IOException {
+    private void handleDisconnect(SelectionKey key) {
+        ClientContext client = (ClientContext) key.attachment();
+        try {
+            // Cleanup Logic
+            if (client.nick != null) {
+                activeUsers.remove(client.nick);
+            }
+            if (client.room != null) {
+                roomManager.getRoom(client.room).removeClient(client);
+            }
+            
+            key.channel().close();
+            key.cancel();
+            System.out.println("Connection closed: " + client.nick);
+        } catch (IOException e) {
+            // Ignore closing errors
+        }
+    }
+
+    // --- Business Logic / Command Parsing ---
+
+    private void processCommand(ClientContext client, String line) {
         String[] parts = line.split(" ");
         String cmd = parts[0];
 
-        // --- STATE: INIT ---
-        if (ctx.state == ClientContext.State.INIT) {
-            if (cmd.equals("/nick") && parts.length > 1) {
-                String nick = parts[1];
-                if (isNickAvailable(selector, nick)) {
-                    ctx.nickname = nick;
-                    ctx.state = ClientContext.State.OUTSIDE;
-                    send(key, "OK");
-                } else {
-                    send(key, "ERROR");
-                }
-            } else if (cmd.equals("/bye")) {
-                send(key, "BYE");
-                closeConnection(key, selector);
-            } else {
-                send(key, "ERROR");
-            }
+        // 1. Handle Commands regardless of state
+        switch (cmd) {
+            case "/nick":
+                handleNick(client, parts);
+                return;
+            case "/bye":
+                client.send(ServerResponse.BYE);
+                handleDisconnect(client.key);
+                return;
+        }
+
+        // 2. Handle State-Specific Commands
+        if (client.state == ClientContext.State.INIT) {
+            client.send(ServerResponse.ERROR); // Expecting /nick
             return;
         }
 
-        // --- STATE: OUTSIDE ---
-        if (ctx.state == ClientContext.State.OUTSIDE) {
-            if (cmd.equals("/nick") && parts.length > 1) {
-                String nick = parts[1];
-                if (isNickAvailable(selector, nick)) {
-                    ctx.nickname = nick;
-                    send(key, "OK");
-                } else {
-                    send(key, "ERROR");
-                }
-            } else if (cmd.equals("/join") && parts.length > 1) {
-                String room = parts[1];
-                ctx.room = room;
-                ctx.state = ClientContext.State.INSIDE;
-                send(key, "OK");
-                broadcast(selector, room, "JOINED " + ctx.nickname, key);
+        if (client.state == ClientContext.State.OUTSIDE) {
+            if (cmd.equals("/join") && parts.length > 1) {
+                handleJoin(client, parts[1]);
             } else if (cmd.equals("/priv") && parts.length > 2) {
-                handlePriv(selector, key, ctx, parts);
-            } else if (cmd.equals("/bye")) {
-                send(key, "BYE");
-                closeConnection(key, selector);
+                handlePriv(client, parts);
             } else {
-                send(key, "ERROR");
+                client.send(ServerResponse.ERROR);
             }
             return;
         }
 
-        // --- STATE: INSIDE ---
-        if (ctx.state == ClientContext.State.INSIDE) {
-            if (cmd.equals("/nick") && parts.length > 1) {
-                String newNick = parts[1];
-                if (isNickAvailable(selector, newNick)) {
-                    String oldNick = ctx.nickname;
-                    ctx.nickname = newNick;
-                    send(key, "OK");
-                    broadcast(selector, ctx.room, "NEWNICK " + oldNick + " " + newNick, key);
-                } else {
-                    send(key, "ERROR");
-                }
-            } else if (cmd.equals("/join") && parts.length > 1) {
-                String oldRoom = ctx.room;
-                String newRoom = parts[1];
-                broadcast(selector, oldRoom, "LEFT " + ctx.nickname, key);
-                ctx.room = newRoom;
-                send(key, "OK");
-                broadcast(selector, newRoom, "JOINED " + ctx.nickname, key);
+        if (client.state == ClientContext.State.INSIDE) {
+            if (cmd.equals("/join") && parts.length > 1) {
+                handleJoin(client, parts[1]);
             } else if (cmd.equals("/leave")) {
-                String room = ctx.room;
-                ctx.room = null;
-                ctx.state = ClientContext.State.OUTSIDE;
-                send(key, "OK");
-                broadcast(selector, room, "LEFT " + ctx.nickname, key);
-            } else if (cmd.equals("/bye")) {
-                broadcast(selector, ctx.room, "LEFT " + ctx.nickname, key);
-                send(key, "BYE");
-                closeConnection(key, selector);
+                handleLeave(client);
             } else if (cmd.equals("/priv") && parts.length > 2) {
-                handlePriv(selector, key, ctx, parts);
+                handlePriv(client, parts);
+            } else if (line.startsWith("/")) {
+                // Handle message escaping
+                if (line.startsWith("//")) {
+                    handleMessage(client, line.substring(1));
+                } else {
+                    client.send(ServerResponse.ERROR);
+                }
             } else {
-                // Handling Messages
-                String message = line;
-                if (message.startsWith("/")) {
-                    if (message.startsWith("//")) {
-                        // Unescape: "//hello" -> "/hello"
-                        message = message.substring(1);
-                    } else {
-                        send(key, "ERROR");
-                        return;
-                    }
-                }
-                String fullMsg = "MESSAGE " + ctx.nickname + " " + message;
-                // Send to user (for consistency with spec) and broadcast
-                send(key, fullMsg);
-                broadcast(selector, ctx.room, fullMsg, key);
+                handleMessage(client, line);
             }
         }
     }
 
-    // Helper to handle private messages
-    static private void handlePriv(Selector selector, SelectionKey senderKey, ClientContext senderCtx, String[] parts) throws IOException {
-        String targetNick = parts[1];
-        String msgContent = "";
-        for (int i = 2; i < parts.length; i++) msgContent += parts[i] + " ";
+    // --- Command Implementations ---
+
+    private void handleNick(ClientContext client, String[] parts) {
+        if (parts.length < 2) {
+            client.send(ServerResponse.ERROR);
+            return;
+        }
+        String newNick = parts[1];
         
-        SelectionKey targetKey = null;
-        for (SelectionKey key : selector.keys()) {
-            ClientContext ctx = (ClientContext) key.attachment();
-            if (ctx != null && targetNick.equals(ctx.nickname)) {
-                targetKey = key;
-                break;
+        if (activeUsers.containsKey(newNick)) {
+            client.send(ServerResponse.ERROR);
+            return;
+        }
+
+        String oldNick = client.nick;
+        
+        // Update Global Registry
+        if (oldNick != null) activeUsers.remove(oldNick);
+        activeUsers.put(newNick, client);
+        
+        client.nick = newNick;
+        
+        if (client.state == ClientContext.State.INIT) {
+            client.state = ClientContext.State.OUTSIDE;
+            client.send(ServerResponse.OK);
+        } else if (client.state == ClientContext.State.OUTSIDE) {
+            client.send(ServerResponse.OK);
+        } else if (client.state == ClientContext.State.INSIDE) {
+            client.send(ServerResponse.OK);
+            roomManager.getRoom(client.room).broadcast(ServerResponse.NEWNICK +" " + oldNick + " " + newNick, client);
+        }
+    }
+
+    private void handleJoin(ClientContext client, String roomName) {
+        // If already in a room, leave it first
+        if (client.state == ClientContext.State.INSIDE) {
+            Room oldRoom = roomManager.getRoom(client.room);
+            oldRoom.removeClient(client); // This handles the LEFT message
+        }
+
+        Room newRoom = roomManager.getOrCreateRoom(roomName);
+        newRoom.addClient(client); // This handles the JOINED message
+        
+        client.room = roomName;
+        client.state = ClientContext.State.INSIDE;
+        client.send(ServerResponse.OK);
+        newRoom.broadcast(ServerResponse.JOINED + " " + client.nick, client);
+    }
+
+    private void handleLeave(ClientContext client) {
+        Room room = roomManager.getRoom(client.room);
+        room.removeClient(client);
+        
+        client.room = null;
+        client.state = ClientContext.State.OUTSIDE;
+        client.send(ServerResponse.OK);
+    }
+
+    private void handlePriv(ClientContext sender, String[] parts) {
+        String targetNick = parts[1];
+        
+        // Reconstruct message
+        StringBuilder msgBody = new StringBuilder();
+        for (int i = 2; i < parts.length; i++) msgBody.append(parts[i]).append(" ");
+        String msg = msgBody.toString().trim();
+
+        ClientContext target = activeUsers.get(targetNick);
+        if (target != null) {
+            sender.send(ServerResponse.OK);
+            target.send(ServerResponse.PRIVATE + " " + sender.nick + " " + msg);
+        } else {
+            sender.send(ServerResponse.ERROR);
+        }
+    }
+
+    private void handleMessage(ClientContext client, String message) {
+        Room room = roomManager.getRoom(client.room);
+        String formatted = ServerResponse.MESSAGE + client.nick + " " + message;
+        client.send(formatted);
+        room.broadcast(formatted, client);
+    }
+
+    // ====================================================================================
+    // INNER CLASSES (Could be separate files)
+    // ====================================================================================
+
+    // 1. ClientContext: Encapsulates connection, buffer, and state
+    static class ClientContext {
+        enum State { INIT, OUTSIDE, INSIDE }
+        
+        final SelectionKey key;
+        final SocketChannel channel;
+        final ByteBuffer buffer = ByteBuffer.allocate(16384);
+        final StringBuilder inputQueue = new StringBuilder();
+        
+        State state = State.INIT;
+        String nick = null;
+        String room = null;
+
+        ClientContext(SelectionKey key, SocketChannel channel) {
+            this.key = key;
+            this.channel = channel;
+        }
+
+        // Returns false if connection closed
+        boolean read() throws IOException {
+            buffer.clear();
+            int bytes = channel.read(buffer);
+            if (bytes == -1) return false;
+
+            buffer.flip();
+            inputQueue.append(StandardCharsets.UTF_8.decode(buffer));
+            return true;
+        }
+
+        boolean hasFullMessage() {
+            return inputQueue.indexOf("\n") != -1;
+        }
+
+        String nextMessage() {
+            int idx = inputQueue.indexOf("\n");
+            if (idx == -1) return "";
+            String msg = inputQueue.substring(0, idx).trim();
+            inputQueue.delete(0, idx + 1);
+            return msg;
+        }
+
+        void send(String msg) {
+            try {
+                channel.write(ByteBuffer.wrap((msg + "\n").getBytes(StandardCharsets.UTF_8)));
+            } catch (IOException e) {
+                // Handle write error if necessary
+            }
+        }
+        void send(ServerResponse sr){
+            send(sr.toString());
+        }
+    }
+
+    // 2. Room: Manages a group of clients
+    static class Room {
+        String name;
+        Set<ClientContext> members = new HashSet<>();
+
+        Room(String name) { this.name = name; }
+
+        void addClient(ClientContext client) {
+            members.add(client);
+        }
+
+        void removeClient(ClientContext client) {
+            if (members.remove(client)) {
+                broadcast("LEFT " + client.nick, client);
             }
         }
 
-        if (targetKey != null) {
-            send(senderKey, "OK");
-            send(targetKey, "PRIVATE " + senderCtx.nickname + " " + msgContent.trim());
-        } else {
-            send(senderKey, "ERROR");
-        }
-    }
-
-    static private void send(SelectionKey key, String msg) throws IOException {
-        if (key.isValid() && key.channel().isOpen()) {
-            SocketChannel sc = (SocketChannel) key.channel();
-            sc.write(ByteBuffer.wrap((msg + "\n").getBytes(charset)));
-        }
-    }
-
-    static private void broadcast(Selector selector, String room, String msg, SelectionKey exceptKey) throws IOException {
-        for (SelectionKey key : selector.keys()) {
-            ClientContext ctx = (ClientContext) key.attachment();
-            if (key.isValid() && ctx != null && ctx.state == ClientContext.State.INSIDE && room.equals(ctx.room)) {
-                if (key != exceptKey) {
-                    send(key, msg);
+        void broadcast(String msg, ClientContext exclude) {
+            for (ClientContext member : members) {
+                if (member != exclude) {
+                    member.send(msg);
                 }
             }
         }
     }
 
-    static private boolean isNickAvailable(Selector selector, String nick) {
-        for (SelectionKey key : selector.keys()) {
-            ClientContext ctx = (ClientContext) key.attachment();
-            if (ctx != null && nick.equals(ctx.nickname)) return false;
-        }
-        return true;
-    }
+    // 3. RoomManager: Manages Room creation and retrieval
+    static class RoomManager {
+        Map<String, Room> rooms = new HashMap<>();
 
-    static private void closeConnection(SelectionKey key, Selector selector) {
-        try {
-            ClientContext ctx = (ClientContext) key.attachment();
-            // If user disconnects abruptly while inside a room, notify others
-            if (ctx != null && ctx.state == ClientContext.State.INSIDE) {
-                broadcast(selector, ctx.room, "LEFT " + ctx.nickname, key);
-            }
-            key.channel().close();
-            key.cancel();
-        } catch (IOException ex) {
-            // ignore
+        Room getOrCreateRoom(String name) {
+            return rooms.computeIfAbsent(name, Room::new);
+        }
+
+        Room getRoom(String name) {
+            return rooms.get(name);
         }
     }
 }
