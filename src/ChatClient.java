@@ -68,7 +68,6 @@ public class ChatClient {
     // Construtor
     public ChatClient(String hostName, int port) throws IOException {
         // Inicialização da interface gráfica --- * NÃO MODIFICAR *
-        initUI();
         // --- Fim da inicialização da interface gráfica
 
         // Se for necessário adicionar código de inicialização ao
@@ -82,6 +81,8 @@ public class ChatClient {
             this.inputBuffer = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             // TODO state based error messages. Example: "Create user name"
             this.state = State.INIT;
+            initUI();
+
             
         }catch (IOException e){
             System.out.println("[Constructor] error: " + e.toString());
@@ -95,6 +96,7 @@ public class ChatClient {
         try{
             String message = "";
             message = this.inputBuffer.readLine();
+            
             printMessage("["+message+"]");
             return message;
         }catch (Exception e){
@@ -198,7 +200,10 @@ public class ChatClient {
                 try{
                     String message = "";
                     while(true){
+                printMessage("[ServerListener Thread running]");
+
                         message = readMessage();
+
                         if(message == null){
                             printMessage("[message is null]");
                             break;
@@ -209,13 +214,14 @@ public class ChatClient {
                 }catch(Exception e){
                     System.out.println("[ServerListener] error: "+e.toString());
                 }finally {
+        printMessage("[ServerListener end]");
+
                     closeSocket();
                 }
             }
         };
 
         serverListener.start();
-        printMessage("[ServerListener end]");
     }
     
     // Instancia o ChatClient e arranca-o invocando o seu método run()

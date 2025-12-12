@@ -76,7 +76,7 @@ public class ChatServer {
     private void handleAccept() throws IOException {
         SocketChannel sc = serverChannel.accept();
         sc.configureBlocking(false);
-        SelectionKey key = sc.register(selector, SelectionKey.OP_READ);
+        SelectionKey key = sc.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
         
         // Attach new client to the key
         ClientContext client = new ClientContext(key, sc);
@@ -131,6 +131,7 @@ public class ChatServer {
 
         printer("ProcessCmd - Start", line);
         printer("ProcessCmd - cmd", cmd);
+        printer("Client state", client.state.toString());
         // 1. Handle Commands regardless of state
         switch (cmd) {
             case ServerCommand.NICK:
@@ -149,9 +150,9 @@ public class ChatServer {
         }
 
         if (client.state == ClientContext.State.OUTSIDE) {
-            if (cmd == ServerCommand.JOIN && parts.length > 1) {
+            if (cmd.equals(ServerCommand.JOIN) && parts.length > 1) {
                 handleJoin(client, parts[1]);
-            } else if (cmd == ServerCommand.PRIVATE && parts.length > 2) {
+            } else if (cmd.equals(ServerCommand.PRIVATE) && parts.length > 2) {
                 handlePriv(client, parts);
             } else {
                 client.sendStr(ServerResponse.ERROR);
@@ -160,11 +161,11 @@ public class ChatServer {
         }
 
         if (client.state == ClientContext.State.INSIDE) {
-            if (cmd == ServerCommand.JOIN && parts.length > 1) {
+            if (cmd.equals(ServerCommand.JOIN) && parts.length > 1) {
                 handleJoin(client, parts[1]);
-            } else if (cmd == ServerCommand.LEAVE) {
+            } else if (cmd.equals(ServerCommand.LEAVE)) {
                 handleLeave(client);
-            } else if (cmd == ServerCommand.PRIVATE && parts.length > 2) {
+            } else if (cmd.equals(ServerCommand.PRIVATE) && parts.length > 2) {
                 handlePriv(client, parts);
             } else if (line.startsWith("/")) { // if it starts with '/', but not '//', return ERROR
                 // Handle message escaping
@@ -228,6 +229,7 @@ public class ChatServer {
 
     private void handleJoin(ClientContext client, String roomName) {
         // If already in a room, leave it first
+        printer("handleJoin", roomName);
         if (client.state == ClientContext.State.INSIDE) {
             Room oldRoom = roomManager.getRoom(client.room);
             oldRoom.removeClient(client); // This handles the LEFT message
@@ -274,6 +276,7 @@ public class ChatServer {
     private void handleMessage(ClientContext client, String message) {
         Room room = roomManager.getRoom(client.room);
         String formatted = ServerResponse.MESSAGE + client.nick + " " + message;
+        System.out.printf("Room:%s client:%s\n",room.name,message);
 
         ByteBuffer buff = stringToByteBuffer(formatted);
 
@@ -283,6 +286,7 @@ public class ChatServer {
 
     static ByteBuffer stringToByteBuffer(String str){
         printer("StringToBuffer", str);
+        str+='\n';
         return ByteBuffer.wrap(str.getBytes());
     }
 
@@ -351,8 +355,18 @@ public class ChatServer {
         void send(ByteBuffer buff) {
             try { // TODO send(Buffer buf); buf.rewind(); nextClient.send(buf); ... 
                 printer("ClientContext.send BUFF Start", StandardCharsets.UTF_8.decode(buff).toString());
-                channel.write(buff);
                 buff.rewind();
+
+                int totalWrite = 0;
+                int totalSize = buff.remaining();
+                while(buff.hasRemaining()){
+                    totalWrite += 
+                channel.write(buff);
+                }
+                if(totalWrite != totalSize){
+                printer("ClientContext.send BUFF Error",StandardCharsets.UTF_8.decode(buff).toString());
+
+                }
                 printer("ClientContext.send BUFF End",StandardCharsets.UTF_8.decode(buff).toString());
             } catch (IOException e) {
                 // Handle write error if necessary
