@@ -4,7 +4,6 @@ import java.nio.*;
 import java.nio.channels.*;
 import java.nio.charset.*;
 import java.util.*;
-import java.util.Base64.Decoder;
 
 public class ChatServer {
     private static final int DEFAULT_PORT = 8000;
@@ -275,7 +274,7 @@ public class ChatServer {
 
     private void handleMessage(ClientContext client, String message) {
         Room room = roomManager.getRoom(client.room);
-        String formatted = ServerResponse.MESSAGE + client.nick + " " + message;
+        String formatted = ServerResponse.MESSAGE + " " + client.nick + " " + message;
         System.out.printf("Room:%s client:%s\n",room.name,message);
 
         ByteBuffer buff = stringToByteBuffer(formatted);

@@ -143,7 +143,7 @@ public class ChatClient {
                 System.out.println("[ProcessMessage] Server returned BYE");
                 break;
             default:
-                System.out.println("[ProcessMessage] Could not interpret response: "+ parts);
+                System.out.println("[ProcessMessage] Could not interpret response: "+ message);
                 break;
         }
     }
@@ -153,10 +153,9 @@ public class ChatClient {
     // na caixa de entrada
     public void sendMessage(String message) throws IOException {
         // PREENCHER AQUI com código que envia a mensagem ao servidor
-        System.out.println("[SendMessage] New outgoing message: \n{" +message +"}");
         //TODO limit outgoing message size to server max buffer size?
         // ChatServer.MAX_BUFFER_SIZE; // 16384
-
+        
         if(message.charAt(0) == '/'){
             // Check commands, else send comment
             String[] parts = message.split(" ", 2);
@@ -166,17 +165,20 @@ public class ChatClient {
                 case ServerCommand.JOIN:
                 case ServerCommand.LEAVE:
                 case ServerCommand.BYE:
-                case ServerCommand.PRIVATE:
-                    this.outputWriter.println(message); // has autoflush
-                    break;
-                default:
-                    this.outputWriter.println("/"+message); // Add slash to start of the message: /add >> //add
-                    break;
-            }
-        }else{
-            //TODO Test visual output for double new lines
-            //Send message to server
-            this.outputWriter.println(message); // has autoflush
+                    case ServerCommand.PRIVATE:
+                        this.outputWriter.println(message); // has autoflush
+                        System.out.println("[SendMessage] New outgoing message: \n{" +message +"}");
+                        break;
+                        default:
+                            this.outputWriter.println("/"+message); // Add slash to start of the message: /add >> //add
+                            System.out.println("[SendMessage] New outgoing message: \n{" +"/"+message +"}");
+                            break;
+                        }
+                    }else{
+                        //TODO Test visual output for double new lines
+                        //Send message to server
+                        this.outputWriter.println(message); // has autoflush
+                        System.out.println("[SendMessage] New outgoing message: \n{" + message +"}");
         }
     }
 
