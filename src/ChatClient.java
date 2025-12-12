@@ -20,11 +20,14 @@ public class ChatClient {
     private Socket socket;
     private PrintWriter outputWriter;
     private BufferedReader inputBuffer;
+
+    enum State { INIT, OUTSIDE, INSIDE };
+    State state;
   
     // Método a usar para acrescentar uma string à caixa de texto
     // * NÃO MODIFICAR *
     public void printMessage(final String message) {
-        chatArea.append(message);
+        chatArea.append(message + "\n");
         //TODO
         System.out.println(message);
     }
@@ -46,7 +49,7 @@ public class ChatClient {
             @Override
             public void actionPerformed(ActionEvent e) {
                 try {
-                    newMessage(chatBox.getText());
+                    sendMessage(chatBox.getText());
                 } catch (IOException ex) {
                 } finally {
                     chatBox.setText("");
@@ -77,7 +80,8 @@ public class ChatClient {
 
             this.outputWriter = new PrintWriter(socket.getOutputStream(), true);
             this.inputBuffer = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-
+            // TODO state based error messages. Example: "Create user name"
+            this.state = State.INIT;
             
         }catch (IOException e){
             System.out.println("[Constructor] error: " + e.toString());
@@ -87,11 +91,13 @@ public class ChatClient {
 
     /// Read incoming Message
     public String readMessage(){
+        printMessage("[Reading Message...]");
         try{
             String message = "";
             message = this.inputBuffer.readLine();
+            printMessage("["+message+"]");
             return message;
-        }catch (IOException e){
+        }catch (Exception e){
             System.out.println("[ReadMessage] error: "+e.toString());
             return null;
         }
@@ -99,33 +105,40 @@ public class ChatClient {
 
     /// Process incoming Message
     public void processMessage(String message){
+        printMessage("[ProcessMessage start]");
         String[] parts = message.split(" ", 3);
-        ServerResponse type = ServerResponse.fromString(parts[0]);
+        String type = (parts[0]);
 
         switch (type) {
-            case OK     : 
+            case ServerResponse.OK     : 
                 //TODO consider printing somewhere else
-                    printMessage("Command returned OK");
+                printMessage("[Command returned OK]");
+                System.out.println("[ProcessMessage] Server returned OK");
                 break;
-            case ERROR  : 
-                //TODO consider printing somewhere else
-                printMessage("Command returned ERROR");
+            case ServerResponse.ERROR  : 
+                printMessage("[Could not send message] {" + message +"}");
+                System.out.println("[ProcessMessage] Server returned ERROR");
                 break;
-            case MESSAGE: 
+            case ServerResponse.MESSAGE: 
                 printMessage(parts[1] + "\n" + parts[2]);
+                System.out.println("[ProcessMessage] Server returned MESSAGE\n{" + message+"}");
                 break;
-            case NEWNICK:
+            case ServerResponse.NEWNICK:
                 printMessage(parts[1] + " changed their name to " + parts[2]); 
+                System.out.println("[ProcessMessage] Server returned NEWNICK");
                 break;
-            case JOINED :
+            case ServerResponse.JOINED :
                 printMessage(parts[1] + " has joined this chat.");
+                System.out.println("[ProcessMessage] Server returned JOINED");
                 break;
-            case LEFT   : 
+            case ServerResponse.LEFT   : 
                 printMessage(parts[1] + " has left this chat.");
+                System.out.println("[ProcessMessage] Server returned LEFT");
                 break;
-            case BYE    :
+            case ServerResponse.BYE    :
                 //TODO consider printing somewhere else
-                printMessage("Bye");
+                printMessage("You have left the chat room.");
+                System.out.println("[ProcessMessage] Server returned BYE");
                 break;
             default:
                 System.out.println("[ProcessMessage] Could not interpret response: "+ parts);
@@ -136,30 +149,31 @@ public class ChatClient {
 
     // Método invocado sempre que o utilizador insere uma mensagem
     // na caixa de entrada
-    public void newMessage(String message) throws IOException {
+    public void sendMessage(String message) throws IOException {
         // PREENCHER AQUI com código que envia a mensagem ao servidor
-        
+        System.out.println("[SendMessage] New outgoing message: \n{" +message +"}");
         //TODO limit outgoing message size to server max buffer size?
-        ChatServer.MAX_BUFFER_SIZE;
+        // ChatServer.MAX_BUFFER_SIZE; // 16384
 
         if(message.charAt(0) == '/'){
             // Check commands, else send comment
             String[] parts = message.split(" ", 2);
-            ServerCommand comd = ServerCommand.fromString(parts[0]);
+            String comd = (parts[0]);
             switch (comd) {
-                case NICK:
-                case JOIN:
-                case LEAVE:
-                case BYE:
-                case PRIVATE:
+                case ServerCommand.NICK:
+                case ServerCommand.JOIN:
+                case ServerCommand.LEAVE:
+                case ServerCommand.BYE:
+                case ServerCommand.PRIVATE:
                     this.outputWriter.println(message); // has autoflush
                     break;
                 default:
-                    this.outputWriter.println("/"+message); // Add slash to start of the message
+                    this.outputWriter.println("/"+message); // Add slash to start of the message: /add >> //add
                     break;
             }
         }else{
             //TODO Test visual output for double new lines
+            //Send message to server
             this.outputWriter.println(message); // has autoflush
         }
     }
@@ -175,17 +189,18 @@ public class ChatClient {
     
     // Método principal do objecto
     public void run() throws IOException {
+        printMessage("[ServerListener start]");
         // PREENCHER AQUI
         final Thread serverListener = new Thread() {
             @Override
             public void run(){
+                printMessage("[ServerListener Thread running]");
                 try{
                     String message = "";
-                    boolean errorFlag = false;
                     while(true){
                         message = readMessage();
-                        errorFlag = (message == null);
-                        if(errorFlag){
+                        if(message == null){
+                            printMessage("[message is null]");
                             break;
                         }else{
                             processMessage(message);
@@ -200,6 +215,7 @@ public class ChatClient {
         };
 
         serverListener.start();
+        printMessage("[ServerListener end]");
     }
     
     // Instancia o ChatClient e arranca-o invocando o seu método run()

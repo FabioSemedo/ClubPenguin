@@ -4,14 +4,17 @@ import java.nio.*;
 import java.nio.channels.*;
 import java.nio.charset.*;
 import java.util.*;
+import java.util.Base64.Decoder;
 
 public class ChatServer {
     private static final int DEFAULT_PORT = 8000;
+    private static final int BUFF_CAPACITY = 16384;
     
     // Core Server Components
     private Selector selector;
     private ServerSocketChannel serverChannel;
     private final RoomManager roomManager = new RoomManager();
+    private final ByteBuffer serverBuffer = ByteBuffer.allocate(BUFF_CAPACITY);
     
     // Lookup table for fast access to users by nickname (for /priv and uniqueness checks)
     private final Map<String, ClientContext> activeUsers = new HashMap<>();
@@ -69,23 +72,23 @@ public class ChatServer {
     }
 
     // --- Network Events ---
-
+    ///Accept new clients
     private void handleAccept() throws IOException {
         SocketChannel sc = serverChannel.accept();
         sc.configureBlocking(false);
         SelectionKey key = sc.register(selector, SelectionKey.OP_READ);
         
-        // Attach our Object-Oriented wrapper to the key
+        // Attach new client to the key
         ClientContext client = new ClientContext(key, sc);
         key.attach(client);
         
-        System.out.println("New connection: " + sc.getRemoteAddress());
+        System.out.println("[HandleAccept] New connection: " + sc.getRemoteAddress());
     }
-
+    // Process message
     private void handleRead(SelectionKey key) throws IOException {
         ClientContext client = (ClientContext) key.attachment();
         
-        // Delegate reading to the client object
+        // Check if we can read
         if (!client.read()) {
             handleDisconnect(key);
             return;
@@ -94,6 +97,7 @@ public class ChatServer {
         // Process all complete messages in the buffer
         while (client.hasFullMessage()) {
             String line = client.nextMessage();
+            printer("HandleRead", line);
             if (!line.isEmpty()) {
                 processCommand(client, line);
             }
@@ -119,91 +123,107 @@ public class ChatServer {
         }
     }
 
-    // --- Business Logic / Command Parsing ---
+    // --- Command Handling ---
 
     private void processCommand(ClientContext client, String line) {
-        String[] parts = line.split(" ");
-        String cmd = parts[0];
+        String[] parts = line.split(" ", 3);
+        String cmd = (parts[0]);
 
+        printer("ProcessCmd - Start", line);
+        printer("ProcessCmd - cmd", cmd);
         // 1. Handle Commands regardless of state
         switch (cmd) {
-            case "/nick":
-                handleNick(client, parts);
+            case ServerCommand.NICK:
+                handleNick(client, parts); //TODO test same source nick request
                 return;
-            case "/bye":
-                client.send(ServerResponse.BYE);
+            case ServerCommand.BYE:
+                client.sendStr(ServerResponse.BYE);
                 handleDisconnect(client.key);
                 return;
         }
 
         // 2. Handle State-Specific Commands
         if (client.state == ClientContext.State.INIT) {
-            client.send(ServerResponse.ERROR); // Expecting /nick
+            client.sendStr(ServerResponse.ERROR + " expecting username."); // Expecting /nick
             return;
         }
 
         if (client.state == ClientContext.State.OUTSIDE) {
-            if (cmd.equals("/join") && parts.length > 1) {
+            if (cmd == ServerCommand.JOIN && parts.length > 1) {
                 handleJoin(client, parts[1]);
-            } else if (cmd.equals("/priv") && parts.length > 2) {
+            } else if (cmd == ServerCommand.PRIVATE && parts.length > 2) {
                 handlePriv(client, parts);
             } else {
-                client.send(ServerResponse.ERROR);
+                client.sendStr(ServerResponse.ERROR);
             }
             return;
         }
 
         if (client.state == ClientContext.State.INSIDE) {
-            if (cmd.equals("/join") && parts.length > 1) {
+            if (cmd == ServerCommand.JOIN && parts.length > 1) {
                 handleJoin(client, parts[1]);
-            } else if (cmd.equals("/leave")) {
+            } else if (cmd == ServerCommand.LEAVE) {
                 handleLeave(client);
-            } else if (cmd.equals("/priv") && parts.length > 2) {
+            } else if (cmd == ServerCommand.PRIVATE && parts.length > 2) {
                 handlePriv(client, parts);
-            } else if (line.startsWith("/")) {
+            } else if (line.startsWith("/")) { // if it starts with '/', but not '//', return ERROR
                 // Handle message escaping
                 if (line.startsWith("//")) {
                     handleMessage(client, line.substring(1));
                 } else {
-                    client.send(ServerResponse.ERROR);
+                    client.sendStr(ServerResponse.ERROR);
                 }
             } else {
                 handleMessage(client, line);
             }
         }
+        printer("ProcessCmd - End", line);
     }
 
     // --- Command Implementations ---
 
     private void handleNick(ClientContext client, String[] parts) {
+        printer("HandleNick - start", Arrays.toString(parts));
         if (parts.length < 2) {
-            client.send(ServerResponse.ERROR);
+            printer("HandleNick - error 1", "");
+            client.sendStr(ServerResponse.ERROR + " not enough arguments for /nick." + Arrays.toString(parts));
             return;
         }
         String newNick = parts[1];
         
         if (activeUsers.containsKey(newNick)) {
-            client.send(ServerResponse.ERROR);
+            printer("HandleNick - error 2", "");
+            client.sendStr(ServerResponse.ERROR + " username \"" + newNick + "\" is taken.");
             return;
         }
-
+        
         String oldNick = client.nick;
         
         // Update Global Registry
         if (oldNick != null) activeUsers.remove(oldNick);
         activeUsers.put(newNick, client);
         
-        client.nick = newNick;
+        client.setNick(newNick);
+        String okResponse = ServerResponse.OK + " username: " + newNick;
         
-        if (client.state == ClientContext.State.INIT) {
-            client.state = ClientContext.State.OUTSIDE;
-            client.send(ServerResponse.OK);
-        } else if (client.state == ClientContext.State.OUTSIDE) {
-            client.send(ServerResponse.OK);
-        } else if (client.state == ClientContext.State.INSIDE) {
-            client.send(ServerResponse.OK);
-            roomManager.getRoom(client.room).broadcast(ServerResponse.NEWNICK +" " + oldNick + " " + newNick, client);
+        printer("HandleNick - client state switch-case", "");
+        switch (client.state) {
+            case INIT:
+                client.setStateOutside(); //TODO consider handling nick change without room removal
+                client.send(stringToByteBuffer(okResponse));
+                break;
+            case OUTSIDE:
+                client.send(stringToByteBuffer(okResponse));
+                break;
+            case INSIDE:
+                client.send(stringToByteBuffer(okResponse));
+                String str = ServerResponse.NEWNICK +" " + oldNick + " " + newNick;
+                roomManager.getRoom(client.room).broadcast(stringToByteBuffer(str), client);
+            default:
+                System.out.print("Bad client.state: " + client.state);
+                break;
         }
+        printer("HandleNick - end", "");
     }
 
     private void handleJoin(ClientContext client, String roomName) {
@@ -216,10 +236,13 @@ public class ChatServer {
         Room newRoom = roomManager.getOrCreateRoom(roomName);
         newRoom.addClient(client); // This handles the JOINED message
         
-        client.room = roomName;
-        client.state = ClientContext.State.INSIDE;
-        client.send(ServerResponse.OK);
-        newRoom.broadcast(ServerResponse.JOINED + " " + client.nick, client);
+        client.setRoom(roomName);
+        client.setStateInside();
+
+        String str = ServerResponse.JOINED + " " + client.nick;
+
+        client.send(stringToByteBuffer(ServerResponse.OK));
+        newRoom.broadcast(stringToByteBuffer(str), client);
     }
 
     private void handleLeave(ClientContext client) {
@@ -228,7 +251,7 @@ public class ChatServer {
         
         client.room = null;
         client.state = ClientContext.State.OUTSIDE;
-        client.send(ServerResponse.OK);
+        client.sendStr(ServerResponse.OK + " you have left "+ room.name);
     }
 
     private void handlePriv(ClientContext sender, String[] parts) {
@@ -241,27 +264,39 @@ public class ChatServer {
 
         ClientContext target = activeUsers.get(targetNick);
         if (target != null) {
-            sender.send(ServerResponse.OK);
-            target.send(ServerResponse.PRIVATE + " " + sender.nick + " " + msg);
+            sender.sendStr(ServerResponse.OK);
+            target.sendStr(ServerResponse.PRIVATE + " " + sender.nick + " " + msg);
         } else {
-            sender.send(ServerResponse.ERROR);
+            sender.sendStr(ServerResponse.ERROR);
         }
     }
 
     private void handleMessage(ClientContext client, String message) {
         Room room = roomManager.getRoom(client.room);
         String formatted = ServerResponse.MESSAGE + client.nick + " " + message;
-        client.send(formatted);
-        room.broadcast(formatted, client);
+
+        ByteBuffer buff = stringToByteBuffer(formatted);
+
+        client.send(buff);// TODO consider not resending messages
+        room.broadcast(buff, client);
+    }
+
+    static ByteBuffer stringToByteBuffer(String str){
+        printer("StringToBuffer", str);
+        return ByteBuffer.wrap(str.getBytes());
+    }
+
+    static void printer(String name, String msg){
+        System.out.println("[" +name +"] {"+msg+"}");
     }
 
     // ====================================================================================
     // INNER CLASSES (Could be separate files)
     // ====================================================================================
 
-    // 1. ClientContext: Encapsulates connection, buffer, and state
-    static class ClientContext {
-        enum State { INIT, OUTSIDE, INSIDE }
+    /// Represents a connected client.
+    private static class ClientContext {
+        enum State { INIT, OUTSIDE, INSIDE };
         
         final SelectionKey key;
         final SocketChannel channel;
@@ -275,6 +310,19 @@ public class ChatServer {
         ClientContext(SelectionKey key, SocketChannel channel) {
             this.key = key;
             this.channel = channel;
+        }
+
+        public void setNick(String nick) {
+            this.nick = nick;
+        }
+        public void setRoom(String room) {
+            this.room = room;
+        }
+        public void setStateInside() {
+            this.state = State.INSIDE;
+        }
+        public void setStateOutside() {
+            this.state = State.OUTSIDE;
         }
 
         // Returns false if connection closed
@@ -300,15 +348,21 @@ public class ChatServer {
             return msg;
         }
 
-        void send(String msg) {
-            try {
-                channel.write(ByteBuffer.wrap((msg + "\n").getBytes(StandardCharsets.UTF_8)));
+        void send(ByteBuffer buff) {
+            try { // TODO send(Buffer buf); buf.rewind(); nextClient.send(buf); ... 
+                printer("ClientContext.send BUFF Start", StandardCharsets.UTF_8.decode(buff).toString());
+                channel.write(buff);
+                buff.rewind();
+                printer("ClientContext.send BUFF End",StandardCharsets.UTF_8.decode(buff).toString());
             } catch (IOException e) {
                 // Handle write error if necessary
+                printer("ClientContext.send BUFF Error",StandardCharsets.UTF_8.decode(buff).toString());
             }
         }
-        void send(ServerResponse sr){
-            send(sr.toString());
+        void sendStr(String msg){
+            printer("ClientContext.send - start", msg);
+            send(ChatServer.stringToByteBuffer(msg));
+            printer("ClientContext.send - end", msg);
         }
     }
 
@@ -325,14 +379,14 @@ public class ChatServer {
 
         void removeClient(ClientContext client) {
             if (members.remove(client)) {
-                broadcast("LEFT " + client.nick, client);
+                broadcast(ChatServer.stringToByteBuffer(ServerResponse.LEFT +" " + client.nick), client);
             }
         }
 
-        void broadcast(String msg, ClientContext exclude) {
+        void broadcast(ByteBuffer buff, ClientContext sender) {            
             for (ClientContext member : members) {
-                if (member != exclude) {
-                    member.send(msg);
+                if (member != sender) {
+                    member.send(buff);
                 }
             }
         }
