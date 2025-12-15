@@ -79,62 +79,62 @@ public class ChatClient {
 
     /// Read incoming Message
     public String readMessage() {
-        LOGGER.info("[Waiting message...]");
+        LOGGER.info("Waiting message...");
         try {
             String message = "";
             message = this.inputBuffer.readLine();
 
-            LOGGER.info("[ReadMessage] Message received: {" + message + "}");
+            LOGGER.info("Message received: {" + message + "}");
             return message;
         } catch (Exception e) {
-            LOGGER.warning("[ReadMessage] error: " + e.toString());
+            LOGGER.warning("Error: " + e.toString());
             return null;
         }
     }
 
     /// Process incoming Message
     public void processMessage(String message) {
-        LOGGER.info("[ProcessMessage starting]");
+        LOGGER.fine("[ProcessMessage starting]");
         String[] parts = message.split(" ", 3);
         String type = (parts[0]);
 
         switch (type) {
             case ServerResponse.OK:
                 // TODO formatar print
-                printMessage("[OK] " + message);
-                LOGGER.info("[ProcessMessage] Server returned OK");
+                printMessage(message);
+                LOGGER.info("Server returned OK");
                 break;
             case ServerResponse.ERROR:
-                printMessage("[Could not send message] " + message);
-                LOGGER.info("[ProcessMessage] Server returned ERROR for: {" + message + "}");
+                printMessage(message);
+                LOGGER.info("Server returned ERROR for: {" + message + "}");
                 break;
             case ServerResponse.MESSAGE:
                 printMessage(parts[1] + ": " + parts[2]);
-                LOGGER.info("[ProcessMessage] Server returned {" + message + "}");
+                LOGGER.info("Server returned {" + message + "}");
                 break;
             case ServerResponse.NEWNICK:
                 printMessage(parts[1] + " changed their name to " + parts[2]);
-                LOGGER.info("[ProcessMessage] Server returned NEWNICK");
+                LOGGER.info("Server returned NEWNICK");
                 break;
             case ServerResponse.JOINED:
                 printMessage(parts[1] + " has joined this chat.");
-                LOGGER.info("[ProcessMessage] Server returned JOINED");
+                LOGGER.info("Server returned JOINED");
                 break;
             case ServerResponse.LEFT:
                 printMessage(parts[1] + " has left this chat.");
-                LOGGER.info("[ProcessMessage] Server returned LEFT");
+                LOGGER.info("Server returned LEFT");
                 break;
             case ServerResponse.BYE:
                 // TODO consider printing somewhere else //é pra fechar a interface?
                 printMessage("You have left the chat room.");
-                LOGGER.info("[ProcessMessage] Server returned BYE");
+                LOGGER.info("Server returned BYE");
                 break;
             case ServerResponse.PRIVATE:
-                printMessage(parts[1] + " (priv): " + parts[2]);
-                LOGGER.info("[ProcessMessage] Server returned {" + message + "}");
+                printMessage("(priv) " + parts[1] + ": " + parts[2]);
+                LOGGER.info("Server returned {" + message + "}");
                 break;
             default:
-                LOGGER.info("[ProcessMessage] Could not interpret response: {" + message + "}");
+                LOGGER.info("Could not interpret response: {" + message + "}");
                 break;
         }
     }
@@ -155,12 +155,12 @@ public class ChatClient {
                 case ServerCommand.PRIVATE:
                     this.outputWriter.println(message); // has autoflush
                     // printMessage(message);
-                    LOGGER.info("[SendMessage] New outgoing message: {" + message + "}");
+                    LOGGER.info("New outgoing message: {" + message + "}");
                     break;
                 default:
                     this.outputWriter.println("/" + message); // Add slash to start of the message: /add >> //add
                     // printMessage("/" + message); //TODO: ver com prof se podemos
-                    LOGGER.info("[SendMessage] New outgoing message: {" + "/" + message + "}");
+                    LOGGER.info("New outgoing message: {" + "/" + message + "}");
                     break;
             }
         } else {
@@ -181,7 +181,7 @@ public class ChatClient {
 
     // Método principal do objecto
     public void run() {
-        LOGGER.info("[ServerListener start]");
+        LOGGER.fine("[ServerListener start]");
 
         final Thread serverListener = new Thread() {
             @Override
@@ -192,14 +192,14 @@ public class ChatClient {
                     while (true) {
                         message = readMessage();
                         if (message == null) {
-                            LOGGER.info("[message is null]");
+                            LOGGER.info("Message is null");
                             break;
                         } else {
                             processMessage(message);
                         }
                     }
                 } catch (Exception e) {
-                    LOGGER.info("[ServerListener] error: " + e.toString());
+                    LOGGER.warning("Error: " + e.toString());
                 } finally {
                     LOGGER.info("[ServerListener end]"); // TODO: deve fechar tudo?
                     closeSocket();
@@ -213,8 +213,10 @@ public class ChatClient {
     // Instancia o ChatClient e arranca-o invocando o seu método run()
     // * NÃO MODIFICAR *
     public static void main(String[] args) throws IOException {
+        System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s [%2$s] %5$s%n");
+
         if (args.length < 2) {
-            LOGGER.info("[Main] Using default port: " + ChatClient.DEFAULT_SERVER + ":" + ChatClient.DEFAULT_PORT);
+            LOGGER.info("Using default port: " + ChatClient.DEFAULT_SERVER + ":" + ChatClient.DEFAULT_PORT);
             ChatClient client = new ChatClient(ChatClient.DEFAULT_SERVER, ChatClient.DEFAULT_PORT);
             client.run();
         } else {

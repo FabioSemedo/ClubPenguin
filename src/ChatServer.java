@@ -95,7 +95,7 @@ public class ChatServer {
         // Process all complete messages in the buffer
         while (client.hasFullMessage()) {
             String line = client.nextMessage();
-            LOGGER.info("New message read: " + line);
+            LOGGER.info("New message read: {" + line + "}");
             if (!line.isEmpty()) {
                 processCommand(client, line);
             }
@@ -200,7 +200,7 @@ public class ChatServer {
         activeUsers.put(newNick, client);
 
         client.setNick(newNick);
-        String okResponse = ServerResponse.OK + " New username set: " + newNick;
+        String okResponse = ServerResponse.OK + " new username set: " + newNick;
 
         switch (client.state) {
             case INIT:
@@ -282,10 +282,6 @@ public class ChatServer {
         return ByteBuffer.wrap(str.getBytes());
     }
 
-    // ====================================================================================
-    // INNER CLASSES (Could be separate files)
-    // ====================================================================================
-
     /// Represents a connected client.
     private static class ClientContext {
         enum State {
@@ -349,7 +345,11 @@ public class ChatServer {
 
         void send(ByteBuffer buff) {
             try {
-                LOGGER.info("Message to be sent: " + StandardCharsets.UTF_8.decode(buff).toString());
+                buff.rewind();
+                LOGGER.info(
+                        "Message to be sent to " + nick + ": {"
+                                + StandardCharsets.UTF_8.decode(buff).toString().replace("\n", "\\n")
+                                + "}");
                 buff.rewind();
 
                 int totalWrite = 0;
@@ -359,8 +359,8 @@ public class ChatServer {
                 }
                 if (totalWrite != totalSize) {
                     LOGGER.warning("Couldn't empty buffer: " + StandardCharsets.UTF_8.decode(buff).toString());
-
                 }
+
             } catch (IOException e) {
                 LOGGER.warning("Buffer Error: " + StandardCharsets.UTF_8.decode(buff).toString());
             }
