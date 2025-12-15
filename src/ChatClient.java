@@ -25,6 +25,11 @@ public class ChatClient {
     private Socket socket;
     private PrintWriter outputWriter;
     private BufferedReader inputBuffer;
+    private String nickname;
+    private int lastNickCmd = 0;
+    private int lastResponse = 0;
+    private int lastMessageSent = 0;
+    private String askedNickname = "";
 
     // Método a usar para acrescentar uma string à caixa de texto
     // * NÃO MODIFICAR *
@@ -88,11 +93,10 @@ public class ChatClient {
         frame.setLayout(new BorderLayout());
         frame.add(panel, BorderLayout.SOUTH);
         frame.add(new JScrollPane(chatArea), BorderLayout.CENTER);
-        frame.setSize(500, 300);
+        frame.setSize(500, 350);
         frame.setVisible(true);
         chatArea.setEditable(false);
         chatArea.setFont(new Font("Consolas", Font.PLAIN, 14));
-        chatArea.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         chatBox.setEditable(true);
         chatBox.setFont(new Font("SansSerif", Font.PLAIN, 14));
         chatBox.setBorder(BorderFactory.createCompoundBorder(
@@ -149,13 +153,17 @@ public class ChatClient {
     }
 
     /// Process incoming Message
-    public void processMessage(String message) {
+    public boolean processMessage(String message) {
         LOGGER.fine("[ProcessMessage starting]");
         String[] parts = message.split(" ", 3);
         String type = (parts[0]);
+        lastResponse++;
 
         switch (type) {
             case ServerResponse.OK:
+                if (lastResponse == lastNickCmd) {
+                    nickname = askedNickname;
+                }
                 printMessage("Success!\n", 2);
                 LOGGER.info("Server returned OK");
                 break;
@@ -164,7 +172,10 @@ public class ChatClient {
                 LOGGER.info("Server returned ERROR");
                 break;
             case ServerResponse.MESSAGE:
-                printMessage(parts[1] + ": " + parts[2], 1);
+                if (parts[1].equals(nickname))
+                    printMessage(parts[1] + ": " + parts[2], 3); // sent message
+                else
+                    printMessage(parts[1] + ": " + parts[2], 1); // received message
                 LOGGER.info("Server returned {" + message + "}");
                 break;
             case ServerResponse.NEWNICK:
@@ -183,7 +194,7 @@ public class ChatClient {
                 // é pra fechar a interface?
                 printMessage("You have quit the chat.", 2);
                 LOGGER.info("Server returned BYE");
-                break;
+                return false;
             case ServerResponse.PRIVATE:
                 printMessage("(priv) " + parts[1] + ": " + parts[2], 1);
                 LOGGER.info("Server returned {" + message + "}");
@@ -192,94 +203,108 @@ public class ChatClient {
                 LOGGER.info("Could not interpret response: {" + message + "}");
                 break;
         }
+        return true;
     }
 
     // Método invocado sempre que o utilizador insere uma mensagem
     // na caixa de entrada
     public void sendMessage(String message) throws IOException {
-        // PREENCHER AQUI com código que envia a mensagem ao servidor
         if (message.equals("")) {
             LOGGER.info("Message is empty");
             return;
         }
         if (message.charAt(0) == '/') {
-            // Check commands, else send comment
+            // Check commands, else send message
             String[] parts = message.split(" ", 2);
             String comd = (parts[0]);
             switch (comd) {
                 case ServerCommand.NICK:
                     printMessage("Changing nickname to " + parts[1] + "...", 2);
-                    this.outputWriter.println(message); // has autoflush
                     LOGGER.info("New outgoing message: {" + message + "}");
+                    this.outputWriter.println(message); // has autoflush
+                    askedNickname = parts[1];
+                    lastNickCmd = lastMessageSent + 1;
                     break;
                 case ServerCommand.JOIN:
                     printMessage("Joining " + parts[1] + "...", 2);
-                    this.outputWriter.println(message); // has autoflush
                     LOGGER.info("New outgoing message: {" + message + "}");
+                    this.outputWriter.println(message); // has autoflush
                     break;
                 case ServerCommand.LEAVE:
                     printMessage("Leaving room...", 2);
-                    this.outputWriter.println(message); // has autoflush
                     LOGGER.info("New outgoing message: {" + message + "}");
+                    this.outputWriter.println(message); // has autoflush
                     break;
                 case ServerCommand.BYE:
                     printMessage("Exiting chat...", 2);
-                    this.outputWriter.println(message); // has autoflush
                     LOGGER.info("New outgoing message: {" + message + "}");
+                    this.outputWriter.println(message); // has autoflush
                     break;
                 case ServerCommand.PRIVATE:
-                    this.outputWriter.println(message); // has autoflush
                     String[] partsPriv = message.split(" ", 3);
                     printMessage("(priv to " + partsPriv[1] + ") " + partsPriv[2], 3);
                     printMessage("Sending private message...", 2);
                     LOGGER.info("New outgoing message: {" + message + "}");
+                    this.outputWriter.println(message); // has autoflush
                     break;
-                default:
-                    this.outputWriter.println("/" + message); // Add slash to start of the message: /add >> //add
+                default: // starts with '/' but it's not a command -> adds /
                     LOGGER.info("New outgoing message: {" + "/" + message + "}");
+                    this.outputWriter.println("/" + message); // add slash to start of the message: /add >> //add
                     break;
             }
         } else {
-            // TODO Test visual output for double new lines
-            // Send message to server
-            printMessage(message, 3);
+            // message to server
             this.outputWriter.println(message); // has autoflush
             LOGGER.info("New outgoing message: {" + message + "}");
         }
+        lastMessageSent++;
     }
 
     public void closeSocket() {
         try {
             this.socket.close();
         } catch (IOException e) {
-            LOGGER.severe("[CloseSocket] failed to close socket. " + e.toString());
+            LOGGER.severe("Failed to close socket. " + e.toString());
         }
     }
 
-    // Método principal do objecto
+    private void closeChat() {
+        SwingUtilities.invokeLater(() -> {
+            chatBox.setEditable(false);
+            chatBox.setEnabled(false);
+
+            chatBox.setText("Desconectado do servidor.");
+            chatBox.setBackground(Color.DARK_GRAY);
+        });
+    }
+
     public void run() {
         LOGGER.fine("ServerListener start");
 
         final Thread serverListener = new Thread() {
             @Override
             public void run() {
-                LOGGER.info("[ServerListener Thread running]");
+                LOGGER.info("ServerListener Thread running");
                 try {
                     String message = "";
                     while (true) {
                         message = readMessage();
-                        if (message.equals("")) {
-                            LOGGER.info("Message is empty");
+                        if (message == null) {
+                            appendToPane("Connection was lost", 1);
+                            break;
                         } else {
-                            processMessage(message);
+                            if (!processMessage(message))
+                                break;
                         }
                     }
                 } catch (Exception e) {
                     LOGGER.warning("Error: " + e.toString());
                 } finally {
-                    LOGGER.info("ServerListener end"); // TODO: deve fechar tudo?
+                    LOGGER.info("ServerListener end");
                     closeSocket();
+                    closeChat();
                 }
+
             }
         };
 
