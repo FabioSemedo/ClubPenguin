@@ -1,9 +1,12 @@
 import java.io.*;
 import java.net.*;
+import java.util.Arrays;
 import java.util.logging.Logger;
 import java.awt.*;
 import java.awt.event.*;
 import javax.swing.*;
+import javax.swing.text.*;
+import javax.swing.border.EmptyBorder;
 
 public class ChatClient {
     private static final Logger LOGGER = Logger.getLogger(ChatClient.class.getName());
@@ -11,7 +14,8 @@ public class ChatClient {
     // Variáveis relacionadas com a interface gráfica --- * NÃO MODIFICAR *
     JFrame frame = new JFrame("Chat Client");
     private JTextField chatBox = new JTextField();
-    private JTextArea chatArea = new JTextArea();
+    // private JTextArea chatArea = new JTextArea();
+    private JTextPane chatArea = new JTextPane();
     // --- Fim das variáveis relacionadas coma interface gráfica
 
     // Se for necessário adicionar variáveis ao objecto ChatClient, devem
@@ -24,8 +28,55 @@ public class ChatClient {
 
     // Método a usar para acrescentar uma string à caixa de texto
     // * NÃO MODIFICAR *
-    public void printMessage(final String message) {
-        chatArea.append(message + "\n");
+    public void printMessage(final String message, int i) {
+        switch (i) {
+            case 1:
+                appendToPane(message + "\n", StyleConstants.ALIGN_LEFT);
+                break;
+            case 2:
+                appendToPane(message + "\n", StyleConstants.ALIGN_CENTER);
+                break;
+            case 3:
+                appendToPane(message + "\n", StyleConstants.ALIGN_RIGHT);
+                break;
+            default:
+                break;
+        }
+        chatArea.setCaretPosition(chatArea.getDocument().getLength());
+    }
+
+    // Método para adicionar mensagem com alinhamento (Esquerda, Direita ou Centro)
+    private void appendToPane(String msg, int alignment) {
+        StyledDocument doc = chatArea.getStyledDocument();
+
+        // Define o estilo (atributos)
+        SimpleAttributeSet style = new SimpleAttributeSet();
+        StyleConstants.setAlignment(style, alignment);
+        StyleConstants.setFontSize(style, 12);
+
+        // Opcional: Cores diferentes dependendo do lado (visual WhatsApp)
+        if (alignment == StyleConstants.ALIGN_RIGHT) {
+            StyleConstants.setForeground(style, new Color(19, 143, 17)); // Verde para mim
+            StyleConstants.setFontSize(style, 14);
+        } else if (alignment == StyleConstants.ALIGN_LEFT) {
+            StyleConstants.setForeground(style, new Color(17, 61, 128)); // Branco para outros
+            StyleConstants.setFontSize(style, 14);
+        }
+
+        // Define o tamanho da fonte (opcional, pois já definimos no construtor)
+
+        try {
+            int length = doc.getLength();
+            // Insere o texto no final
+            doc.insertString(length, msg + "\n", style);
+            // Aplica o alinhamento ao parágrafo recém-criado
+            doc.setParagraphAttributes(length, msg.length(), style, false);
+
+            // Auto-scroll
+            chatArea.setCaretPosition(doc.getLength());
+        } catch (BadLocationException e) {
+            e.printStackTrace();
+        }
     }
 
     public void initUI() {
@@ -40,7 +91,13 @@ public class ChatClient {
         frame.setSize(500, 300);
         frame.setVisible(true);
         chatArea.setEditable(false);
+        chatArea.setFont(new Font("Consolas", Font.PLAIN, 14));
+        chatArea.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         chatBox.setEditable(true);
+        chatBox.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        chatBox.setBorder(BorderFactory.createCompoundBorder(
+                chatBox.getBorder(),
+                BorderFactory.createEmptyBorder(5, 5, 5, 5)));
         chatBox.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -64,11 +121,10 @@ public class ChatClient {
     public ChatClient(String hostName, int port) throws IOException {
         try {
             this.socket = new Socket(hostName, port);
-            System.out.println("Connnecting to: " + hostName + ":" + port);
+            LOGGER.info("Connnecting to: " + hostName + ":" + port);
 
             this.outputWriter = new PrintWriter(socket.getOutputStream(), true);
             this.inputBuffer = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            // TODO state based error messages. Example: "Create user name"
             initUI();
 
         } catch (IOException e) {
@@ -100,37 +156,36 @@ public class ChatClient {
 
         switch (type) {
             case ServerResponse.OK:
-                // TODO formatar print
-                printMessage(message);
+                printMessage("Success!\n", 2);
                 LOGGER.info("Server returned OK");
                 break;
             case ServerResponse.ERROR:
-                printMessage(message);
-                LOGGER.info("Server returned ERROR for: {" + message + "}");
+                printMessage("Error! Try again\n", 2);
+                LOGGER.info("Server returned ERROR");
                 break;
             case ServerResponse.MESSAGE:
-                printMessage(parts[1] + ": " + parts[2]);
+                printMessage(parts[1] + ": " + parts[2], 1);
                 LOGGER.info("Server returned {" + message + "}");
                 break;
             case ServerResponse.NEWNICK:
-                printMessage(parts[1] + " changed their name to " + parts[2]);
+                printMessage(parts[1] + " changed their name to " + parts[2], 2);
                 LOGGER.info("Server returned NEWNICK");
                 break;
             case ServerResponse.JOINED:
-                printMessage(parts[1] + " has joined this chat.");
+                printMessage(parts[1] + " has joined this chat room.", 2);
                 LOGGER.info("Server returned JOINED");
                 break;
             case ServerResponse.LEFT:
-                printMessage(parts[1] + " has left this chat.");
+                printMessage(parts[1] + " has left this chat room.", 2);
                 LOGGER.info("Server returned LEFT");
                 break;
             case ServerResponse.BYE:
-                // TODO consider printing somewhere else //é pra fechar a interface?
-                printMessage("You have left the chat room.");
+                // é pra fechar a interface?
+                printMessage("You have quit the chat.", 2);
                 LOGGER.info("Server returned BYE");
                 break;
             case ServerResponse.PRIVATE:
-                printMessage("(priv) " + parts[1] + ": " + parts[2]);
+                printMessage("(priv) " + parts[1] + ": " + parts[2], 1);
                 LOGGER.info("Server returned {" + message + "}");
                 break;
             default:
@@ -143,31 +198,53 @@ public class ChatClient {
     // na caixa de entrada
     public void sendMessage(String message) throws IOException {
         // PREENCHER AQUI com código que envia a mensagem ao servidor
+        if (message.equals("")) {
+            LOGGER.info("Message is empty");
+            return;
+        }
         if (message.charAt(0) == '/') {
             // Check commands, else send comment
             String[] parts = message.split(" ", 2);
             String comd = (parts[0]);
             switch (comd) {
                 case ServerCommand.NICK:
+                    printMessage("Changing nickname to " + parts[1] + "...", 2);
+                    this.outputWriter.println(message); // has autoflush
+                    LOGGER.info("New outgoing message: {" + message + "}");
+                    break;
                 case ServerCommand.JOIN:
+                    printMessage("Joining " + parts[1] + "...", 2);
+                    this.outputWriter.println(message); // has autoflush
+                    LOGGER.info("New outgoing message: {" + message + "}");
+                    break;
                 case ServerCommand.LEAVE:
+                    printMessage("Leaving room...", 2);
+                    this.outputWriter.println(message); // has autoflush
+                    LOGGER.info("New outgoing message: {" + message + "}");
+                    break;
                 case ServerCommand.BYE:
+                    printMessage("Exiting chat...", 2);
+                    this.outputWriter.println(message); // has autoflush
+                    LOGGER.info("New outgoing message: {" + message + "}");
+                    break;
                 case ServerCommand.PRIVATE:
                     this.outputWriter.println(message); // has autoflush
-                    // printMessage(message);
+                    String[] partsPriv = message.split(" ", 3);
+                    printMessage("(priv to " + partsPriv[1] + ") " + partsPriv[2], 3);
+                    printMessage("Sending private message...", 2);
                     LOGGER.info("New outgoing message: {" + message + "}");
                     break;
                 default:
                     this.outputWriter.println("/" + message); // Add slash to start of the message: /add >> //add
-                    // printMessage("/" + message); //TODO: ver com prof se podemos
                     LOGGER.info("New outgoing message: {" + "/" + message + "}");
                     break;
             }
         } else {
             // TODO Test visual output for double new lines
             // Send message to server
+            printMessage(message, 3);
             this.outputWriter.println(message); // has autoflush
-            LOGGER.info("[SendMessage] New outgoing message: {" + message + "}");
+            LOGGER.info("New outgoing message: {" + message + "}");
         }
     }
 
@@ -175,13 +252,13 @@ public class ChatClient {
         try {
             this.socket.close();
         } catch (IOException e) {
-            System.out.println("[CloseSocket] failed to close socket. " + e.toString());
+            LOGGER.severe("[CloseSocket] failed to close socket. " + e.toString());
         }
     }
 
     // Método principal do objecto
     public void run() {
-        LOGGER.fine("[ServerListener start]");
+        LOGGER.fine("ServerListener start");
 
         final Thread serverListener = new Thread() {
             @Override
@@ -191,9 +268,8 @@ public class ChatClient {
                     String message = "";
                     while (true) {
                         message = readMessage();
-                        if (message == null) {
-                            LOGGER.info("Message is null");
-                            break;
+                        if (message.equals("")) {
+                            LOGGER.info("Message is empty");
                         } else {
                             processMessage(message);
                         }
@@ -201,7 +277,7 @@ public class ChatClient {
                 } catch (Exception e) {
                     LOGGER.warning("Error: " + e.toString());
                 } finally {
-                    LOGGER.info("[ServerListener end]"); // TODO: deve fechar tudo?
+                    LOGGER.info("ServerListener end"); // TODO: deve fechar tudo?
                     closeSocket();
                 }
             }

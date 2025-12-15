@@ -8,14 +8,14 @@ import java.util.logging.Logger;
 
 public class ChatServer {
     private static final int DEFAULT_PORT = 8000;
-    private static final int BUFF_CAPACITY = 16384;
+    // private static final int BUFF_CAPACITY = 16384;
     private static final Logger LOGGER = Logger.getLogger(ChatServer.class.getName());
 
     // Core Server Components
     private Selector selector;
     private ServerSocketChannel serverChannel;
     private final RoomManager roomManager = new RoomManager();
-    private final ByteBuffer serverBuffer = ByteBuffer.allocate(BUFF_CAPACITY);
+    // private final ByteBuffer serverBuffer = ByteBuffer.allocate(BUFF_CAPACITY);
 
     // Lookup table for fast access to users by nickname (for /priv and uniqueness
     // checks)
@@ -114,7 +114,7 @@ public class ChatServer {
 
             key.channel().close();
             key.cancel();
-            System.out.println("Connection closed: " + client.nick);
+            LOGGER.info("Connection closed: " + client.nick);
         } catch (IOException e) {
             // Ignore closing errors
         }
@@ -130,7 +130,7 @@ public class ChatServer {
         LOGGER.fine("Cmd: " + cmd);
         LOGGER.fine("Client state: " + client.state.toString());
 
-        // 1. Handle Commands regardless of state
+        // Commands regardless of state
         switch (cmd) {
             case ServerCommand.NICK:
                 handleNick(client, parts); // TODO test same source nick request
@@ -142,7 +142,7 @@ public class ChatServer {
         }
 
         if (client.state == ClientContext.State.INIT) {
-            client.sendStr(ServerResponse.ERROR + " expecting username."); // Expecting /nick
+            client.sendStr(ServerResponse.ERROR); // + " Expecting username."
             return;
         }
 
@@ -152,7 +152,7 @@ public class ChatServer {
             } else if (cmd.equals(ServerCommand.PRIVATE) && parts.length > 2) {
                 handlePriv(client, parts);
             } else {
-                client.sendStr(ServerResponse.ERROR + " you need to join a room.");
+                client.sendStr(ServerResponse.ERROR); // + " You need to join a room."
             }
             return;
         }
@@ -169,8 +169,7 @@ public class ChatServer {
                 if (line.startsWith("//")) {
                     handleMessage(client, line.substring(1));
                 } else {
-                    client.sendStr(ServerResponse.ERROR + " command not identified"); // should never happen with our
-                                                                                      // client
+                    client.sendStr(ServerResponse.ERROR); // should never happen with our client
                 }
             } else {
                 handleMessage(client, line);
@@ -182,14 +181,14 @@ public class ChatServer {
         LOGGER.fine("Message: " + Arrays.toString(parts));
         if (parts.length < 2) {
             LOGGER.warning("Error: not enough args");
-            client.sendStr(ServerResponse.ERROR + " not enough arguments for /nick." + Arrays.toString(parts));
+            client.sendStr(ServerResponse.ERROR); // + " Not enough arguments for /nick." + Arrays.toString(parts)
             return;
         }
         String newNick = parts[1];
 
         if (activeUsers.containsKey(newNick)) {
             LOGGER.warning("Error: username taken");
-            client.sendStr(ServerResponse.ERROR + " username \"" + newNick + "\" is taken.");
+            client.sendStr(ServerResponse.ERROR); // + " Username \"" + newNick + "\" is taken."
             return;
         }
 
@@ -200,7 +199,8 @@ public class ChatServer {
         activeUsers.put(newNick, client);
 
         client.setNick(newNick);
-        String okResponse = ServerResponse.OK + " new username set: " + newNick;
+        String okResponse = ServerResponse.OK;
+        // + " New username set: " + newNick;
 
         switch (client.state) {
             case INIT:
@@ -237,7 +237,7 @@ public class ChatServer {
 
         String response = ServerResponse.JOINED + " " + client.nick;
 
-        client.sendStr(ServerResponse.OK + " you joined " + roomName);
+        client.sendStr(ServerResponse.OK); // + " You joined " + roomName
         newRoom.broadcast(stringToByteBuffer(response), client);
     }
 
@@ -247,7 +247,7 @@ public class ChatServer {
 
         client.room = null;
         client.state = ClientContext.State.OUTSIDE;
-        client.sendStr(ServerResponse.OK + " you have left " + room.name);
+        client.sendStr(ServerResponse.OK); // " You have left " + room.name
     }
 
     private void handlePriv(ClientContext sender, String[] parts) {
@@ -263,7 +263,7 @@ public class ChatServer {
             sender.sendStr(ServerResponse.OK); // enviar a propria msg?
             target.sendStr(ServerResponse.PRIVATE + " " + sender.nick + " " + msg);
         } else {
-            sender.sendStr(ServerResponse.ERROR + " this username doesn't exist.");
+            sender.sendStr(ServerResponse.ERROR); // + " This username doesn't exist."
         }
     }
 
