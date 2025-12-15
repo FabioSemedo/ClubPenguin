@@ -4,33 +4,34 @@ import java.nio.*;
 import java.nio.channels.*;
 import java.nio.charset.*;
 import java.util.*;
+import java.util.logging.Logger;
 
 public class ChatServer {
     private static final int DEFAULT_PORT = 8000;
     private static final int BUFF_CAPACITY = 16384;
-    
+    private static final Logger LOGGER = Logger.getLogger(ChatServer.class.getName());
+
     // Core Server Components
     private Selector selector;
     private ServerSocketChannel serverChannel;
     private final RoomManager roomManager = new RoomManager();
     private final ByteBuffer serverBuffer = ByteBuffer.allocate(BUFF_CAPACITY);
-    
-    // Lookup table for fast access to users by nickname (for /priv and uniqueness checks)
+
+    // Lookup table for fast access to users by nickname (for /priv and uniqueness
+    // checks)
     private final Map<String, ClientContext> activeUsers = new HashMap<>();
 
     public static void main(String[] args) {
+        System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s [%2$s] %5$s%n");
         int port;
 
-        if(!(args.length > 0)){
-            System.out.println(
-                "[Server Main] Missing expected arguments:\nChatServer <port>\nUsing default: "
-                +ChatServer.DEFAULT_PORT);
-
+        if (!(args.length > 0)) {
             port = ChatServer.DEFAULT_PORT;
-        }else{
+            LOGGER.info("Using default port: " + ChatServer.DEFAULT_PORT);
+        } else {
             port = Integer.parseInt(args[0]);
         }
-        
+
         try {
             new ChatServer().run(port);
         } catch (IOException e) {
@@ -39,18 +40,17 @@ public class ChatServer {
     }
 
     public void run(int port) throws IOException {
-        // 1. Setup Network
         selector = Selector.open();
         serverChannel = ServerSocketChannel.open();
         serverChannel.configureBlocking(false);
         serverChannel.bind(new InetSocketAddress(port));
         serverChannel.register(selector, SelectionKey.OP_ACCEPT);
 
-        System.out.println("ChatServer started on port " + port);
+        LOGGER.info("ChatServer started on port " + port);
 
-        // 2. Main Loop
         while (true) {
-            if (selector.select() == 0) continue;
+            if (selector.select() == 0)
+                continue;
 
             Iterator<SelectionKey> it = selector.selectedKeys().iterator();
             while (it.hasNext()) {
@@ -70,23 +70,22 @@ public class ChatServer {
         }
     }
 
-    // --- Network Events ---
-    ///Accept new clients
+    // Accept new clients
     private void handleAccept() throws IOException {
         SocketChannel sc = serverChannel.accept();
         sc.configureBlocking(false);
         SelectionKey key = sc.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
-        
-        // Attach new client to the key
+
         ClientContext client = new ClientContext(key, sc);
         key.attach(client);
-        
-        System.out.println("[HandleAccept] New connection: " + sc.getRemoteAddress());
+
+        LOGGER.info("New connection: " + sc.getRemoteAddress());
     }
+
     // Process message
     private void handleRead(SelectionKey key) throws IOException {
         ClientContext client = (ClientContext) key.attachment();
-        
+
         // Check if we can read
         if (!client.read()) {
             handleDisconnect(key);
@@ -96,7 +95,7 @@ public class ChatServer {
         // Process all complete messages in the buffer
         while (client.hasFullMessage()) {
             String line = client.nextMessage();
-            printer("HandleRead", line);
+            LOGGER.info(line);
             if (!line.isEmpty()) {
                 processCommand(client, line);
             }
@@ -106,14 +105,13 @@ public class ChatServer {
     private void handleDisconnect(SelectionKey key) {
         ClientContext client = (ClientContext) key.attachment();
         try {
-            // Cleanup Logic
             if (client.nick != null) {
                 activeUsers.remove(client.nick);
             }
             if (client.room != null) {
                 roomManager.getRoom(client.room).removeClient(client);
             }
-            
+
             key.channel().close();
             key.cancel();
             System.out.println("Connection closed: " + client.nick);
@@ -122,19 +120,20 @@ public class ChatServer {
         }
     }
 
-    // --- Command Handling ---
+    // Commands
 
     private void processCommand(ClientContext client, String line) {
         String[] parts = line.split(" ", 3);
         String cmd = (parts[0]);
 
-        printer("ProcessCmd - Start", line);
-        printer("ProcessCmd - cmd", cmd);
-        printer("Client state", client.state.toString());
+        LOGGER.info("Line: " + line);
+        LOGGER.info("Cmd: " + cmd);
+        LOGGER.info("Client state: " + client.state.toString());
+
         // 1. Handle Commands regardless of state
         switch (cmd) {
             case ServerCommand.NICK:
-                handleNick(client, parts); //TODO test same source nick request
+                handleNick(client, parts); // TODO test same source nick request
                 return;
             case ServerCommand.BYE:
                 client.sendStr(ServerResponse.BYE);
@@ -142,7 +141,6 @@ public class ChatServer {
                 return;
         }
 
-        // 2. Handle State-Specific Commands
         if (client.state == ClientContext.State.INIT) {
             client.sendStr(ServerResponse.ERROR + " expecting username."); // Expecting /nick
             return;
@@ -154,7 +152,7 @@ public class ChatServer {
             } else if (cmd.equals(ServerCommand.PRIVATE) && parts.length > 2) {
                 handlePriv(client, parts);
             } else {
-                client.sendStr(ServerResponse.ERROR);
+                client.sendStr(ServerResponse.ERROR + " you need to join a room.");
             }
             return;
         }
@@ -171,64 +169,61 @@ public class ChatServer {
                 if (line.startsWith("//")) {
                     handleMessage(client, line.substring(1));
                 } else {
-                    client.sendStr(ServerResponse.ERROR);
+                    client.sendStr(ServerResponse.ERROR + " command not identified"); // should never happen with our
+                                                                                      // client
                 }
             } else {
                 handleMessage(client, line);
             }
         }
-        printer("ProcessCmd - End", line);
     }
 
-    // --- Command Implementations ---
-
     private void handleNick(ClientContext client, String[] parts) {
-        printer("HandleNick - start", Arrays.toString(parts));
+        LOGGER.info("Message: " + Arrays.toString(parts));
         if (parts.length < 2) {
-            printer("HandleNick - error 1", "");
+            LOGGER.info("Error: not enough args");
             client.sendStr(ServerResponse.ERROR + " not enough arguments for /nick." + Arrays.toString(parts));
             return;
         }
         String newNick = parts[1];
-        
+
         if (activeUsers.containsKey(newNick)) {
-            printer("HandleNick - error 2", "");
+            LOGGER.info("Error: username taken");
             client.sendStr(ServerResponse.ERROR + " username \"" + newNick + "\" is taken.");
             return;
         }
-        
+
         String oldNick = client.nick;
-        
-        // Update Global Registry
-        if (oldNick != null) activeUsers.remove(oldNick);
+
+        if (oldNick != null)
+            activeUsers.remove(oldNick);
         activeUsers.put(newNick, client);
-        
+
         client.setNick(newNick);
-        String okResponse = ServerResponse.OK + " username: " + newNick;
-        
-        printer("HandleNick - client state switch-case", "");
+        String okResponse = ServerResponse.OK + " New username set: " + newNick;
+
         switch (client.state) {
             case INIT:
-                client.setStateOutside(); //TODO consider handling nick change without room removal
-                client.send(stringToByteBuffer(okResponse));
+                client.setStateOutside();
+                client.sendStr(okResponse);
                 break;
             case OUTSIDE:
-                client.send(stringToByteBuffer(okResponse));
+                client.sendStr(okResponse);
                 break;
             case INSIDE:
-                client.send(stringToByteBuffer(okResponse));
-                String str = ServerResponse.NEWNICK +" " + oldNick + " " + newNick;
+                client.sendStr(okResponse);
+                String str = ServerResponse.NEWNICK + " " + oldNick + " " + newNick;
                 roomManager.getRoom(client.room).broadcast(stringToByteBuffer(str), client);
+                break;
             default:
-                System.out.print("Bad client.state: " + client.state);
+                LOGGER.info("Bad client.state: " + client.state);
                 break;
         }
-        printer("HandleNick - end", "");
     }
 
     private void handleJoin(ClientContext client, String roomName) {
         // If already in a room, leave it first
-        printer("handleJoin", roomName);
+        LOGGER.info("Room name: " + roomName);
         if (client.state == ClientContext.State.INSIDE) {
             Room oldRoom = roomManager.getRoom(client.room);
             oldRoom.removeClient(client); // This handles the LEFT message
@@ -236,46 +231,46 @@ public class ChatServer {
 
         Room newRoom = roomManager.getOrCreateRoom(roomName);
         newRoom.addClient(client); // This handles the JOINED message
-        
+
         client.setRoom(roomName);
         client.setStateInside();
 
-        String str = ServerResponse.JOINED + " " + client.nick;
+        String response = ServerResponse.JOINED + " " + client.nick;
 
-        client.send(stringToByteBuffer(ServerResponse.OK));
-        newRoom.broadcast(stringToByteBuffer(str), client);
+        client.sendStr(ServerResponse.OK + " you joined " + roomName);
+        newRoom.broadcast(stringToByteBuffer(response), client);
     }
 
     private void handleLeave(ClientContext client) {
         Room room = roomManager.getRoom(client.room);
         room.removeClient(client);
-        
+
         client.room = null;
         client.state = ClientContext.State.OUTSIDE;
-        client.sendStr(ServerResponse.OK + " you have left "+ room.name);
+        client.sendStr(ServerResponse.OK + " you have left " + room.name);
     }
 
     private void handlePriv(ClientContext sender, String[] parts) {
         String targetNick = parts[1];
-        
-        // Reconstruct message
+
         StringBuilder msgBody = new StringBuilder();
-        for (int i = 2; i < parts.length; i++) msgBody.append(parts[i]).append(" ");
+        for (int i = 2; i < parts.length; i++)
+            msgBody.append(parts[i]).append(" ");
         String msg = msgBody.toString().trim();
 
         ClientContext target = activeUsers.get(targetNick);
         if (target != null) {
-            sender.sendStr(ServerResponse.OK);
+            sender.sendStr(ServerResponse.OK); // enviar a propria msg?
             target.sendStr(ServerResponse.PRIVATE + " " + sender.nick + " " + msg);
         } else {
-            sender.sendStr(ServerResponse.ERROR);
+            sender.sendStr(ServerResponse.ERROR + " this username doesn't exist.");
         }
     }
 
     private void handleMessage(ClientContext client, String message) {
         Room room = roomManager.getRoom(client.room);
         String formatted = ServerResponse.MESSAGE + " " + client.nick + " " + message;
-        System.out.printf("Room:%s client:%s\n",room.name,message);
+        System.out.printf("Room:%s client:%s\n", room.name, message);
 
         ByteBuffer buff = stringToByteBuffer(formatted);
 
@@ -283,14 +278,9 @@ public class ChatServer {
         room.broadcast(buff, client);
     }
 
-    static ByteBuffer stringToByteBuffer(String str){
-        printer("StringToBuffer", str);
-        str+='\n';
+    static ByteBuffer stringToByteBuffer(String str) {
+        str += '\n';
         return ByteBuffer.wrap(str.getBytes());
-    }
-
-    static void printer(String name, String msg){
-        System.out.println("[" +name +"] {"+msg+"}");
     }
 
     // ====================================================================================
@@ -299,13 +289,15 @@ public class ChatServer {
 
     /// Represents a connected client.
     private static class ClientContext {
-        enum State { INIT, OUTSIDE, INSIDE };
-        
+        enum State {
+            INIT, OUTSIDE, INSIDE
+        };
+
         final SelectionKey key;
         final SocketChannel channel;
         final ByteBuffer buffer = ByteBuffer.allocate(16384);
         final StringBuilder inputQueue = new StringBuilder();
-        
+
         State state = State.INIT;
         String nick = null;
         String room = null;
@@ -318,12 +310,15 @@ public class ChatServer {
         public void setNick(String nick) {
             this.nick = nick;
         }
+
         public void setRoom(String room) {
             this.room = room;
         }
+
         public void setStateInside() {
             this.state = State.INSIDE;
         }
+
         public void setStateOutside() {
             this.state = State.OUTSIDE;
         }
@@ -332,7 +327,8 @@ public class ChatServer {
         boolean read() throws IOException {
             buffer.clear();
             int bytes = channel.read(buffer);
-            if (bytes == -1) return false;
+            if (bytes == -1)
+                return false;
 
             buffer.flip();
             inputQueue.append(StandardCharsets.UTF_8.decode(buffer));
@@ -345,37 +341,34 @@ public class ChatServer {
 
         String nextMessage() {
             int idx = inputQueue.indexOf("\n");
-            if (idx == -1) return "";
+            if (idx == -1)
+                return "";
             String msg = inputQueue.substring(0, idx).trim();
             inputQueue.delete(0, idx + 1);
             return msg;
         }
 
         void send(ByteBuffer buff) {
-            try { // TODO send(Buffer buf); buf.rewind(); nextClient.send(buf); ... 
-                printer("ClientContext.send BUFF Start", StandardCharsets.UTF_8.decode(buff).toString());
+            try {
+                LOGGER.info("Message to be sent: " + StandardCharsets.UTF_8.decode(buff).toString());
                 buff.rewind();
 
                 int totalWrite = 0;
                 int totalSize = buff.remaining();
-                while(buff.hasRemaining()){
-                    totalWrite += 
-                channel.write(buff);
+                while (buff.hasRemaining()) {
+                    totalWrite += channel.write(buff);
                 }
-                if(totalWrite != totalSize){
-                printer("ClientContext.send BUFF Error",StandardCharsets.UTF_8.decode(buff).toString());
+                if (totalWrite != totalSize) {
+                    LOGGER.warning("Couldn't empty buffer: " + StandardCharsets.UTF_8.decode(buff).toString());
 
                 }
-                printer("ClientContext.send BUFF End",StandardCharsets.UTF_8.decode(buff).toString());
             } catch (IOException e) {
-                // Handle write error if necessary
-                printer("ClientContext.send BUFF Error",StandardCharsets.UTF_8.decode(buff).toString());
+                LOGGER.warning("Buffer Error: " + StandardCharsets.UTF_8.decode(buff).toString());
             }
         }
-        void sendStr(String msg){
-            printer("ClientContext.send - start", msg);
+
+        void sendStr(String msg) {
             send(ChatServer.stringToByteBuffer(msg));
-            printer("ClientContext.send - end", msg);
         }
     }
 
@@ -384,7 +377,9 @@ public class ChatServer {
         String name;
         Set<ClientContext> members = new HashSet<>();
 
-        Room(String name) { this.name = name; }
+        Room(String name) {
+            this.name = name;
+        }
 
         void addClient(ClientContext client) {
             members.add(client);
@@ -392,11 +387,11 @@ public class ChatServer {
 
         void removeClient(ClientContext client) {
             if (members.remove(client)) {
-                broadcast(ChatServer.stringToByteBuffer(ServerResponse.LEFT +" " + client.nick), client);
+                broadcast(ChatServer.stringToByteBuffer(ServerResponse.LEFT + " " + client.nick), client);
             }
         }
 
-        void broadcast(ByteBuffer buff, ClientContext sender) {            
+        void broadcast(ByteBuffer buff, ClientContext sender) {
             for (ClientContext member : members) {
                 if (member != sender) {
                     member.send(buff);
