@@ -27,7 +27,7 @@ public class ChatServer {
 
         if (!(args.length > 0)) {
             port = ChatServer.DEFAULT_PORT;
-            LOGGER.info("Using default port: " + ChatServer.DEFAULT_PORT);
+            LOGGER.fine("Using default port: " + ChatServer.DEFAULT_PORT);
         } else {
             port = Integer.parseInt(args[0]);
         }
@@ -95,7 +95,7 @@ public class ChatServer {
         // Process all complete messages in the buffer
         while (client.hasFullMessage()) {
             String line = client.nextMessage();
-            LOGGER.info(line);
+            LOGGER.info("New message read: " + line);
             if (!line.isEmpty()) {
                 processCommand(client, line);
             }
@@ -126,9 +126,9 @@ public class ChatServer {
         String[] parts = line.split(" ", 3);
         String cmd = (parts[0]);
 
-        LOGGER.info("Line: " + line);
-        LOGGER.info("Cmd: " + cmd);
-        LOGGER.info("Client state: " + client.state.toString());
+        LOGGER.fine("Line: " + line);
+        LOGGER.fine("Cmd: " + cmd);
+        LOGGER.fine("Client state: " + client.state.toString());
 
         // 1. Handle Commands regardless of state
         switch (cmd) {
@@ -179,16 +179,16 @@ public class ChatServer {
     }
 
     private void handleNick(ClientContext client, String[] parts) {
-        LOGGER.info("Message: " + Arrays.toString(parts));
+        LOGGER.fine("Message: " + Arrays.toString(parts));
         if (parts.length < 2) {
-            LOGGER.info("Error: not enough args");
+            LOGGER.warning("Error: not enough args");
             client.sendStr(ServerResponse.ERROR + " not enough arguments for /nick." + Arrays.toString(parts));
             return;
         }
         String newNick = parts[1];
 
         if (activeUsers.containsKey(newNick)) {
-            LOGGER.info("Error: username taken");
+            LOGGER.warning("Error: username taken");
             client.sendStr(ServerResponse.ERROR + " username \"" + newNick + "\" is taken.");
             return;
         }
@@ -216,14 +216,14 @@ public class ChatServer {
                 roomManager.getRoom(client.room).broadcast(stringToByteBuffer(str), client);
                 break;
             default:
-                LOGGER.info("Bad client.state: " + client.state);
+                LOGGER.severe("Bad client.state: " + client.state);
                 break;
         }
     }
 
     private void handleJoin(ClientContext client, String roomName) {
         // If already in a room, leave it first
-        LOGGER.info("Room name: " + roomName);
+        LOGGER.fine("Room name: " + roomName);
         if (client.state == ClientContext.State.INSIDE) {
             Room oldRoom = roomManager.getRoom(client.room);
             oldRoom.removeClient(client); // This handles the LEFT message
@@ -270,8 +270,7 @@ public class ChatServer {
     private void handleMessage(ClientContext client, String message) {
         Room room = roomManager.getRoom(client.room);
         String formatted = ServerResponse.MESSAGE + " " + client.nick + " " + message;
-        System.out.printf("Room:%s client:%s\n", room.name, message);
-
+        LOGGER.info(client.nick + " sent {" + message + "} to room " + room.name);
         ByteBuffer buff = stringToByteBuffer(formatted);
 
         client.send(buff);// TODO consider not resending messages
