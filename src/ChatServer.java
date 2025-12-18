@@ -8,18 +8,15 @@ import java.util.logging.Logger;
 
 public class ChatServer {
     private static final int DEFAULT_PORT = 8000;
-    // private static final int BUFF_CAPACITY = 16384;
     private static final Logger LOGGER = Logger.getLogger(ChatServer.class.getName());
 
     // Core Server Components
     private Selector selector;
     private ServerSocketChannel serverChannel;
-    private final RoomManager roomManager = new RoomManager();
-    // private final ByteBuffer serverBuffer = ByteBuffer.allocate(BUFF_CAPACITY);
 
-    // Lookup table for fast access to users by nickname (for /priv and uniqueness
-    // checks)
     private final Map<String, ClientContext> activeUsers = new HashMap<>();
+
+    Map<String, Room> rooms = new HashMap<>();
 
     public static void main(String[] args) {
         System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s [%2$s] %5$s%n");
@@ -74,7 +71,7 @@ public class ChatServer {
     private void handleAccept() throws IOException {
         SocketChannel sc = serverChannel.accept();
         sc.configureBlocking(false);
-        SelectionKey key = sc.register(selector, SelectionKey.OP_READ | SelectionKey.OP_WRITE);
+        SelectionKey key = sc.register(selector, SelectionKey.OP_READ);
 
         ClientContext client = new ClientContext(key, sc);
         key.attach(client);
@@ -109,7 +106,7 @@ public class ChatServer {
                 activeUsers.remove(client.nick);
             }
             if (client.room != null) {
-                roomManager.getRoom(client.room).removeClient(client);
+                getRoom(client.room).removeClient(client);
             }
 
             key.channel().close();
@@ -121,7 +118,6 @@ public class ChatServer {
     }
 
     // Commands
-
     private void processCommand(ClientContext client, String line) {
         String[] parts = line.split(" ", 3);
         String cmd = (parts[0]);
@@ -133,7 +129,7 @@ public class ChatServer {
         // Commands regardless of state
         switch (cmd) {
             case ServerCommand.NICK:
-                handleNick(client, parts); // TODO test same source nick request
+                handleNick(client, parts);
                 return;
             case ServerCommand.BYE:
                 client.sendStr(ServerResponse.BYE);
@@ -142,7 +138,7 @@ public class ChatServer {
         }
 
         if (client.state == ClientContext.State.INIT) {
-            client.sendStr(ServerResponse.ERROR); // + " Expecting username."
+            client.sendStr(ServerResponse.ERROR);
             return;
         }
 
@@ -152,7 +148,7 @@ public class ChatServer {
             } else if (cmd.equals(ServerCommand.PRIVATE) && parts.length > 2) {
                 handlePriv(client, parts);
             } else {
-                client.sendStr(ServerResponse.ERROR); // + " You need to join a room."
+                client.sendStr(ServerResponse.ERROR);
             }
             return;
         }
@@ -181,14 +177,14 @@ public class ChatServer {
         LOGGER.fine("Message: " + Arrays.toString(parts));
         if (parts.length < 2) {
             LOGGER.warning("Error: not enough args");
-            client.sendStr(ServerResponse.ERROR); // + " Not enough arguments for /nick." + Arrays.toString(parts)
+            client.sendStr(ServerResponse.ERROR);
             return;
         }
         String newNick = parts[1];
 
         if (activeUsers.containsKey(newNick)) {
             LOGGER.warning("Error: username taken");
-            client.sendStr(ServerResponse.ERROR); // + " Username \"" + newNick + "\" is taken."
+            client.sendStr(ServerResponse.ERROR);
             return;
         }
 
@@ -200,7 +196,6 @@ public class ChatServer {
 
         client.setNick(newNick);
         String okResponse = ServerResponse.OK;
-        // + " New username set: " + newNick;
 
         switch (client.state) {
             case INIT:
@@ -213,7 +208,7 @@ public class ChatServer {
             case INSIDE:
                 client.sendStr(okResponse);
                 String str = ServerResponse.NEWNICK + " " + oldNick + " " + newNick;
-                roomManager.getRoom(client.room).broadcast(stringToByteBuffer(str), client);
+                getRoom(client.room).broadcast(stringToByteBuffer(str), client);
                 break;
             default:
                 LOGGER.severe("Bad client.state: " + client.state);
@@ -225,11 +220,11 @@ public class ChatServer {
         // If already in a room, leave it first
         LOGGER.fine("Room name: " + roomName);
         if (client.state == ClientContext.State.INSIDE) {
-            Room oldRoom = roomManager.getRoom(client.room);
+            Room oldRoom = getRoom(client.room);
             oldRoom.removeClient(client); // This handles the LEFT message
         }
 
-        Room newRoom = roomManager.getOrCreateRoom(roomName);
+        Room newRoom = getOrCreateRoom(roomName);
         newRoom.addClient(client); // This handles the JOINED message
 
         client.setRoom(roomName);
@@ -237,17 +232,17 @@ public class ChatServer {
 
         String response = ServerResponse.JOINED + " " + client.nick;
 
-        client.sendStr(ServerResponse.OK); // + " You joined " + roomName
+        client.sendStr(ServerResponse.OK);
         newRoom.broadcast(stringToByteBuffer(response), client);
     }
 
     private void handleLeave(ClientContext client) {
-        Room room = roomManager.getRoom(client.room);
+        Room room = getRoom(client.room);
         room.removeClient(client);
 
         client.room = null;
         client.state = ClientContext.State.OUTSIDE;
-        client.sendStr(ServerResponse.OK); // " You have left " + room.name
+        client.sendStr(ServerResponse.OK);
     }
 
     private void handlePriv(ClientContext sender, String[] parts) {
@@ -260,26 +255,35 @@ public class ChatServer {
 
         ClientContext target = activeUsers.get(targetNick);
         if (target != null) {
-            sender.sendStr(ServerResponse.OK); // enviar a propria msg?
+            sender.sendStr(ServerResponse.OK);
             target.sendStr(ServerResponse.PRIVATE + " " + sender.nick + " " + msg);
         } else {
-            sender.sendStr(ServerResponse.ERROR); // + " This username doesn't exist."
+            sender.sendStr(ServerResponse.ERROR);
         }
     }
 
     private void handleMessage(ClientContext client, String message) {
-        Room room = roomManager.getRoom(client.room);
+        Room room = getRoom(client.room);
         String formatted = ServerResponse.MESSAGE + " " + client.nick + " " + message;
         LOGGER.info(client.nick + " sent {" + message + "} to room " + room.name);
         ByteBuffer buff = stringToByteBuffer(formatted);
 
-        client.send(buff);// TODO consider not resending messages
+        client.send(buff);
         room.broadcast(buff, client);
     }
 
+    // helpers
     static ByteBuffer stringToByteBuffer(String str) {
         str += '\n';
         return ByteBuffer.wrap(str.getBytes());
+    }
+
+    Room getOrCreateRoom(String name) {
+        return rooms.computeIfAbsent(name, Room::new);
+    }
+
+    Room getRoom(String name) {
+        return rooms.get(name);
     }
 
     /// Represents a connected client.
@@ -327,6 +331,12 @@ public class ChatServer {
 
             buffer.flip();
             inputQueue.append(StandardCharsets.UTF_8.decode(buffer));
+
+            if (inputQueue.length() > 2048) { // limite de 2KB
+                LOGGER.warning("Cliente " + nick + " excedeu tamanho de mensagem. Desconectando.");
+                return false;
+            }
+
             return true;
         }
 
@@ -371,7 +381,7 @@ public class ChatServer {
         }
     }
 
-    // 2. Room: Manages a group of clients
+    // Manages a group of clients
     static class Room {
         String name;
         Set<ClientContext> members = new HashSet<>();
@@ -396,19 +406,6 @@ public class ChatServer {
                     member.send(buff);
                 }
             }
-        }
-    }
-
-    // 3. RoomManager: Manages Room creation and retrieval
-    static class RoomManager {
-        Map<String, Room> rooms = new HashMap<>();
-
-        Room getOrCreateRoom(String name) {
-            return rooms.computeIfAbsent(name, Room::new);
-        }
-
-        Room getRoom(String name) {
-            return rooms.get(name);
         }
     }
 }

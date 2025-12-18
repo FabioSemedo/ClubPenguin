@@ -1,12 +1,10 @@
 import java.io.*;
 import java.net.*;
-import java.util.Arrays;
 import java.util.logging.Logger;
 import java.awt.*;
 import java.awt.event.*;
 import javax.swing.*;
 import javax.swing.text.*;
-import javax.swing.border.EmptyBorder;
 
 public class ChatClient {
     private static final Logger LOGGER = Logger.getLogger(ChatClient.class.getName());
@@ -86,12 +84,8 @@ public class ChatClient {
         chatBox.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                try {
-                    sendMessage(chatBox.getText());
-                } catch (IOException ex) {
-                } finally {
-                    chatBox.setText("");
-                }
+                sendMessage(chatBox.getText());
+                chatBox.setText("");
             }
         });
         frame.addWindowListener(new WindowAdapter() {
