@@ -11,28 +11,20 @@ import javax.swing.border.EmptyBorder;
 public class ChatClient {
     private static final Logger LOGGER = Logger.getLogger(ChatClient.class.getName());
 
-    // Variáveis relacionadas com a interface gráfica --- * NÃO MODIFICAR *
     JFrame frame = new JFrame("Chat Client");
     private JTextField chatBox = new JTextField();
-    // private JTextArea chatArea = new JTextArea();
     private JTextPane chatArea = new JTextPane();
-    // --- Fim das variáveis relacionadas coma interface gráfica
 
-    // Se for necessário adicionar variáveis ao objecto ChatClient, devem
-    // ser colocadas aqui
     private static final int DEFAULT_PORT = 8000;
     private static final String DEFAULT_SERVER = "localhost";
     private Socket socket;
     private PrintWriter outputWriter;
     private BufferedReader inputBuffer;
     private String nickname;
-    private int lastNickCmd = 0;
-    private int lastResponse = 0;
-    private int lastMessageSent = 0;
     private String askedNickname = "";
+    private boolean lastNickCmd = false;
 
     // Método a usar para acrescentar uma string à caixa de texto
-    // * NÃO MODIFICAR *
     public void printMessage(final String message, int i) {
         switch (i) {
             case 1:
@@ -50,34 +42,24 @@ public class ChatClient {
         chatArea.setCaretPosition(chatArea.getDocument().getLength());
     }
 
-    // Método para adicionar mensagem com alinhamento (Esquerda, Direita ou Centro)
     private void appendToPane(String msg, int alignment) {
         StyledDocument doc = chatArea.getStyledDocument();
 
-        // Define o estilo (atributos)
         SimpleAttributeSet style = new SimpleAttributeSet();
         StyleConstants.setAlignment(style, alignment);
         StyleConstants.setFontSize(style, 12);
 
-        // Opcional: Cores diferentes dependendo do lado (visual WhatsApp)
         if (alignment == StyleConstants.ALIGN_RIGHT) {
-            StyleConstants.setForeground(style, new Color(19, 143, 17)); // Verde para mim
-            StyleConstants.setFontSize(style, 14);
+            StyleConstants.setForeground(style, new Color(19, 143, 17));
         } else if (alignment == StyleConstants.ALIGN_LEFT) {
-            StyleConstants.setForeground(style, new Color(17, 61, 128)); // Branco para outros
+            StyleConstants.setForeground(style, new Color(17, 61, 128));
             StyleConstants.setFontSize(style, 14);
         }
 
-        // Define o tamanho da fonte (opcional, pois já definimos no construtor)
-
         try {
             int length = doc.getLength();
-            // Insere o texto no final
             doc.insertString(length, msg + "\n", style);
-            // Aplica o alinhamento ao parágrafo recém-criado
             doc.setParagraphAttributes(length, msg.length(), style, false);
-
-            // Auto-scroll
             chatArea.setCaretPosition(doc.getLength());
         } catch (BadLocationException e) {
             e.printStackTrace();
@@ -85,7 +67,6 @@ public class ChatClient {
     }
 
     public void initUI() {
-        // Inicialização da interface gráfica --- * NÃO MODIFICAR *
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         JPanel panel = new JPanel();
         panel.setLayout(new BorderLayout());
@@ -118,10 +99,8 @@ public class ChatClient {
                 chatBox.requestFocusInWindow();
             }
         });
-        // --- Fim da inicialização da interface gráfica
     }
 
-    // Construtor
     public ChatClient(String hostName, int port) throws IOException {
         try {
             this.socket = new Socket(hostName, port);
@@ -158,30 +137,21 @@ public class ChatClient {
         String[] parts = message.split(" ", 3);
         String type = (parts[0]);
 
-        System.out.println("Nickname: " + nickname);
-        System.out.println("Asked nickname: " + askedNickname);
-        System.out.println("Last message sent: " + lastMessageSent);
-        System.out.println("Last nick cmd: " + lastNickCmd);
-        System.out.println("Last response: " + lastResponse);
-
         switch (type) {
             case ServerResponse.OK:
-                if (lastResponse == lastNickCmd) {
+                if (lastNickCmd) {
                     nickname = askedNickname;
                 }
                 printMessage("Success!\n", 2);
                 LOGGER.info("Server returned OK");
-                lastResponse++;
                 break;
             case ServerResponse.ERROR:
                 printMessage("Error! Try again\n", 2);
                 LOGGER.info("Server returned ERROR");
-                lastResponse++;
                 break;
             case ServerResponse.MESSAGE:
                 if (parts[1].equals(nickname)) {
                     printMessage(parts[1] + ": " + parts[2], 3); // sent message
-                    lastResponse++;
                 } else
                     printMessage(parts[1] + ": " + parts[2], 1); // received message
                 LOGGER.info("Server returned {" + message + "}");
@@ -197,13 +167,11 @@ public class ChatClient {
             case ServerResponse.LEFT:
                 printMessage(parts[1] + " has left this chat room.", 2);
                 LOGGER.info("Server returned LEFT");
-                lastResponse++;
                 break;
             case ServerResponse.BYE:
                 // é pra fechar a interface?
                 printMessage("You have quit the chat.", 2);
                 LOGGER.info("Server returned BYE");
-                lastResponse++;
                 return false;
             case ServerResponse.PRIVATE:
                 printMessage("(priv) " + parts[1] + ": " + parts[2], 1);
@@ -219,11 +187,13 @@ public class ChatClient {
 
     // Método invocado sempre que o utilizador insere uma mensagem
     // na caixa de entrada
-    public void sendMessage(String message) throws IOException {
+    public void sendMessage(String message) {
         if (message.equals("")) {
             LOGGER.info("Message is empty");
             return;
         }
+
+        lastNickCmd = false;
         if (message.charAt(0) == '/') {
             // Check commands, else send message
             String[] parts = message.split(" ", 2);
@@ -234,29 +204,29 @@ public class ChatClient {
                     LOGGER.info("New outgoing message: {" + message + "}");
                     this.outputWriter.println(message); // has autoflush
                     askedNickname = parts[1];
-                    lastNickCmd = lastMessageSent;
+                    lastNickCmd = true;
                     break;
                 case ServerCommand.JOIN:
                     printMessage("Joining " + parts[1] + "...", 2);
                     LOGGER.info("New outgoing message: {" + message + "}");
-                    this.outputWriter.println(message); // has autoflush
+                    this.outputWriter.println(message);
                     break;
                 case ServerCommand.LEAVE:
                     printMessage("Leaving room...", 2);
                     LOGGER.info("New outgoing message: {" + message + "}");
-                    this.outputWriter.println(message); // has autoflush
+                    this.outputWriter.println(message);
                     break;
                 case ServerCommand.BYE:
                     printMessage("Exiting chat...", 2);
                     LOGGER.info("New outgoing message: {" + message + "}");
-                    this.outputWriter.println(message); // has autoflush
+                    this.outputWriter.println(message);
                     break;
                 case ServerCommand.PRIVATE:
                     String[] partsPriv = message.split(" ", 3);
                     printMessage("(priv to " + partsPriv[1] + ") " + partsPriv[2], 3);
                     printMessage("Sending private message...", 2);
                     LOGGER.info("New outgoing message: {" + message + "}");
-                    this.outputWriter.println(message); // has autoflush
+                    this.outputWriter.println(message);
                     break;
                 default: // starts with '/' but it's not a command -> adds /
                     LOGGER.info("New outgoing message: {" + "/" + message + "}");
@@ -265,10 +235,9 @@ public class ChatClient {
             }
         } else {
             // message to server
-            this.outputWriter.println(message); // has autoflush
+            this.outputWriter.println(message);
             LOGGER.info("New outgoing message: {" + message + "}");
         }
-        lastMessageSent++;
     }
 
     public void closeSocket() {
@@ -323,7 +292,6 @@ public class ChatClient {
     }
 
     // Instancia o ChatClient e arranca-o invocando o seu método run()
-    // * NÃO MODIFICAR *
     public static void main(String[] args) throws IOException {
         System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s [%2$s] %5$s%n");
 
