@@ -157,7 +157,12 @@ public class ChatClient {
         LOGGER.fine("[ProcessMessage starting]");
         String[] parts = message.split(" ", 3);
         String type = (parts[0]);
-        lastResponse++;
+
+        System.out.println("Nickname: " + nickname);
+        System.out.println("Asked nickname: " + askedNickname);
+        System.out.println("Last message sent: " + lastMessageSent);
+        System.out.println("Last nick cmd: " + lastNickCmd);
+        System.out.println("Last response: " + lastResponse);
 
         switch (type) {
             case ServerResponse.OK:
@@ -166,15 +171,18 @@ public class ChatClient {
                 }
                 printMessage("Success!\n", 2);
                 LOGGER.info("Server returned OK");
+                lastResponse++;
                 break;
             case ServerResponse.ERROR:
                 printMessage("Error! Try again\n", 2);
                 LOGGER.info("Server returned ERROR");
+                lastResponse++;
                 break;
             case ServerResponse.MESSAGE:
-                if (parts[1].equals(nickname))
+                if (parts[1].equals(nickname)) {
                     printMessage(parts[1] + ": " + parts[2], 3); // sent message
-                else
+                    lastResponse++;
+                } else
                     printMessage(parts[1] + ": " + parts[2], 1); // received message
                 LOGGER.info("Server returned {" + message + "}");
                 break;
@@ -189,11 +197,13 @@ public class ChatClient {
             case ServerResponse.LEFT:
                 printMessage(parts[1] + " has left this chat room.", 2);
                 LOGGER.info("Server returned LEFT");
+                lastResponse++;
                 break;
             case ServerResponse.BYE:
                 // é pra fechar a interface?
                 printMessage("You have quit the chat.", 2);
                 LOGGER.info("Server returned BYE");
+                lastResponse++;
                 return false;
             case ServerResponse.PRIVATE:
                 printMessage("(priv) " + parts[1] + ": " + parts[2], 1);
@@ -203,6 +213,7 @@ public class ChatClient {
                 LOGGER.info("Could not interpret response: {" + message + "}");
                 break;
         }
+
         return true;
     }
 
@@ -223,7 +234,7 @@ public class ChatClient {
                     LOGGER.info("New outgoing message: {" + message + "}");
                     this.outputWriter.println(message); // has autoflush
                     askedNickname = parts[1];
-                    lastNickCmd = lastMessageSent + 1;
+                    lastNickCmd = lastMessageSent;
                     break;
                 case ServerCommand.JOIN:
                     printMessage("Joining " + parts[1] + "...", 2);
