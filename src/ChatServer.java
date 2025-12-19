@@ -6,6 +6,31 @@ import java.nio.charset.*;
 import java.util.*;
 import java.util.logging.Logger;
 
+/**
+ * A non-blocking, NIO-based server for the chat application.
+ * <p>
+ * This server handles multiple client connections simultaneously using a single thread
+ * and the Java NIO {@link Selector} mechanism. It manages:
+ * <ul>
+ * <li>Client connections and disconnections.</li>
+ * <li>State transitions (INIT, OUTSIDE, INSIDE) for every user.</li>
+ * <li>Room creation and management.</li>
+ * <li>Broadcasting public messages and routing private messages.</li>
+ * </ul>
+ * <p>
+ * <strong>Usage:</strong>
+ * <pre>
+ * // Run with default port 8000
+ * java ChatServer
+ * // Run with custom port
+ * java ChatServer 9090
+ * </pre>
+ *
+ * @version 1.0
+ * @see ChatClient
+ * @see ServerResponse
+ * @see ServerCommand
+ */
 public class ChatServer {
     private static final int DEFAULT_PORT = 8000;
     private static final Logger LOGGER = Logger.getLogger(ChatServer.class.getName());
@@ -18,6 +43,12 @@ public class ChatServer {
 
     Map<String, Room> rooms = new HashMap<>();
 
+    /**
+     * Entry point for the server application.
+     * <p>
+     * If no command-line arguments are provided, it defaults to listening to port {@code ChatServer.DEFAULT_PORT}.
+     * @param args - [(portNumber), ... ]
+     */
     public static void main(String[] args) {
         System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s [%2$s] %5$s%n");
         int port;
@@ -35,7 +66,16 @@ public class ChatServer {
             e.printStackTrace();
         }
     }
-
+    
+    /**
+     * Starts the main server loop.
+     * <p>
+     * Sets up the {@link ServerSocketChannel} and enters an infinite loop waiting for
+     * network events (Accept, Read) via the {@link Selector}.
+     * 
+     * @param port The port number to bind the server to.
+     * @throws IOException If the server fails to open the socket or selector.
+     */
     public void run(int port) throws IOException {
         selector = Selector.open();
         serverChannel = ServerSocketChannel.open();
@@ -67,7 +107,13 @@ public class ChatServer {
         }
     }
 
-    // Accept new clients
+    /**
+     * Accepts a new incoming connection.
+     * <p>
+     * Registers the new {@link SocketChannel} with the selector for reading operations
+     * and attaches a new {@link ClientContext} to manage the client's state.
+     * @throws IOException If {@code serverChannel.accept()} throws an IO error.
+     */
     private void handleAccept() throws IOException {
         SocketChannel sc = serverChannel.accept();
         sc.configureBlocking(false);
@@ -79,7 +125,13 @@ public class ChatServer {
         LOGGER.info("New connection: " + sc.getRemoteAddress());
     }
 
-    // Process message
+    /**
+     * Reads data from a client channel and appends it to the client's buffer.
+     * <p>
+     * If a complete line (ending in newline) is found, it is passed to {@link #processCommand}.
+     * @param key The selection key associated with the client.
+     * @throws IOException If the {@code ClientContext.read} operation throws an IO error.
+     */
     private void handleRead(SelectionKey key) throws IOException {
         ClientContext client = (ClientContext) key.attachment();
 
@@ -99,6 +151,11 @@ public class ChatServer {
         }
     }
 
+    /**
+     * Removes a client from both the list of {@link #activeUsers} and {@link Room}.
+     * Afterwards closes the channel and cancels the selection key.
+     * @param key - Client's SelectionKey
+     */
     private void handleDisconnect(SelectionKey key) {
         ClientContext client = (ClientContext) key.attachment();
         try {
@@ -117,7 +174,16 @@ public class ChatServer {
         }
     }
 
-    // Commands
+    /**
+     * Interprets and executes a message/command received from a client.
+     * <p>
+     * This method validates commands based on the client's current {@link ClientContext.State}.
+     * Supported commands include {@code /nick}, {@code /join}, {@code /leave}, {@code /bye},
+     * and {@code /priv}. Calls a dedicated handler for each {@link ServerCommand}.
+     * 
+     * @param client The client context sending the command.
+     * @param line The raw text line received.
+     */
     private void processCommand(ClientContext client, String line) {
         String[] parts = line.split(" ", 3);
         String cmd = (parts[0]);
@@ -173,6 +239,12 @@ public class ChatServer {
         }
     }
 
+    /** Validates and executes {@code /nick} commands. 
+     * On success, updates the client's nickname and  broadcasts this change to the clients in the same Room.
+     * Responds with OK if success, ERROR otherwise.
+     * @param client - Client making the request.
+     * @param parts - [ _ , (newNick)]
+     */
     private void handleNick(ClientContext client, String[] parts) {
         LOGGER.fine("Message: " + Arrays.toString(parts));
         if (parts.length < 2) {
@@ -216,6 +288,13 @@ public class ChatServer {
         }
     }
 
+    /** Validates and executes {@code /join} commands. 
+     * On success, updates the client's Room and broadcasts JOINED to the clients in the Room.
+     * If the Room does not yet exist, it will be created.
+     * Responds with OK if success.
+     * @param client - client making the request.
+     * @param roomName - a unique Room name.
+     */ 
     private void handleJoin(ClientContext client, String roomName) {
         // If already in a room, leave it first
         LOGGER.fine("Room name: " + roomName);
@@ -236,6 +315,11 @@ public class ChatServer {
         newRoom.broadcast(stringToByteBuffer(response), client);
     }
 
+    /** Validates and executes {@code /leave} commands. 
+     * On success, removes the client from the Room and broadcasts LEFT to the clients in that same Room.
+     * Responds with OK if success.
+     * @param client - client making the request.
+     */
     private void handleLeave(ClientContext client) {
         Room room = getRoom(client.room);
         room.removeClient(client);
@@ -245,6 +329,13 @@ public class ChatServer {
         client.sendStr(ServerResponse.OK);
     }
 
+    /** Validates and executes {@code /priv} commands. 
+     * On success, sends a message to a client with the given nick.
+     * If the Room does not yet exist, it will be created.
+     * Responds with OK if success, ERROR otherwise.
+     * @param sender - client making the request.
+     * @param parts - {@code [ _ , (destClient), (message)]}
+     */
     private void handlePriv(ClientContext sender, String[] parts) {
         String targetNick = parts[1];
 
@@ -262,6 +353,11 @@ public class ChatServer {
         }
     }
 
+    /** Broadcasts messages to all the clients in the Room of a given client.
+     * No response is sent.
+     * @param client - client making the request.
+     * @param message - client's input
+     */
     private void handleMessage(ClientContext client, String message) {
         Room room = getRoom(client.room);
         String formatted = ServerResponse.MESSAGE + " " + client.nick + " " + message;
@@ -286,7 +382,7 @@ public class ChatServer {
         return rooms.get(name);
     }
 
-    /// Represents a connected client.
+    /** Represents a connected client. */
     private static class ClientContext {
         enum State {
             INIT, OUTSIDE, INSIDE
@@ -381,7 +477,7 @@ public class ChatServer {
         }
     }
 
-    // Manages a group of clients
+    /** Manages a group of clients. */
     static class Room {
         String name;
         Set<ClientContext> members = new HashSet<>();

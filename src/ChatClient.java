@@ -6,6 +6,32 @@ import java.awt.event.*;
 import javax.swing.*;
 import javax.swing.text.*;
 
+/**
+ * A Swing-based client for the chat application that communicates with a remote 
+ * server via TCP sockets.
+ * <p>
+ * This client provides a Graphical User Interface (GUI) for users to:
+ * <ul>
+ * <li>Connect to a ChatServer using a hostname and port.</li>
+ * <li>Send public and private messages.</li>
+ * <li>Execute commands such as {@code /nick}, {@code /join}, and {@code /leave}.</li>
+ * <li>View real-time chat history formatted with color-coded alignment.</li>
+ * </ul>
+ * <p>
+ * The client runs on two main threads: the Swing Event Dispatch Thread (EDT) for 
+ * UI updates and a separate listener thread for reading incoming server messages.
+ *
+ * <p><b>Usage:</b></p>
+ * <pre>
+ * // Run with default localhost:8000
+ * java ChatClient
+ * // Run with custom host and port
+ * java ChatClient 192.168.1.50 8080
+ * </pre>
+ * 
+ * @version 1.0
+ * @see ChatServer
+ */
 public class ChatClient {
     private static final Logger LOGGER = Logger.getLogger(ChatClient.class.getName());
 
@@ -22,7 +48,32 @@ public class ChatClient {
     private String askedNickname = "";
     private boolean lastNickCmd = false;
 
-    // Método a usar para acrescentar uma string à caixa de texto
+    /** 
+     * Simple server client for a text based messaging system.
+     * @param hostName - server domain.
+     * @param port - port number for socket connection
+     * @throws IOException
+     */
+    public ChatClient(String hostName, int port) throws IOException {
+        try {
+            this.socket = new Socket(hostName, port);
+            LOGGER.info("Connecting to: " + hostName + ":" + port);
+
+            this.outputWriter = new PrintWriter(socket.getOutputStream(), true);
+            this.inputBuffer = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            initUI();
+
+        } catch (IOException e) {
+            System.out.println("[Constructor] error: " + e.toString());
+            throw e;
+        }
+    }
+
+    /**
+     * Prints a message to the Chat Text Area in the client's UI.
+     * @param message - Text to be displayed
+     * @param i - Defines text alignment. 1 = left, 2 = center, 3 = right.
+     */
     public void printMessage(final String message, int i) {
         switch (i) {
             case 1:
@@ -40,6 +91,12 @@ public class ChatClient {
         chatArea.setCaretPosition(chatArea.getDocument().getLength());
     }
 
+    /**
+     * Prints a message to the Chat Text Area with dedicated formatting.
+     * @param msg - message
+     * @param alignment - Defines text alignment with a StyleConstants alignment value.
+     *  0 = left, 1 = center, 2 = right.
+     */
     private void appendToPane(String msg, int alignment) {
         StyledDocument doc = chatArea.getStyledDocument();
 
@@ -64,6 +121,9 @@ public class ChatClient {
         }
     }
 
+    /**
+     * Initialises the UI elements the client uses to send and view messages.
+     */
     public void initUI() {
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         JPanel panel = new JPanel();
@@ -95,22 +155,10 @@ public class ChatClient {
         });
     }
 
-    public ChatClient(String hostName, int port) throws IOException {
-        try {
-            this.socket = new Socket(hostName, port);
-            LOGGER.info("Connnecting to: " + hostName + ":" + port);
-
-            this.outputWriter = new PrintWriter(socket.getOutputStream(), true);
-            this.inputBuffer = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            initUI();
-
-        } catch (IOException e) {
-            System.out.println("[Constructor] error: " + e.toString());
-            throw e;
-        }
-    }
-
-    /// Read incoming Message
+    /**
+     * Read incoming Message in the {@link #inputBuffer}
+     * @return The oldest message in buffer. Or null if an IO exception is thrown.
+     */
     public String readMessage() {
         LOGGER.info("Waiting message...");
         try {
@@ -125,7 +173,11 @@ public class ChatClient {
         }
     }
 
-    /// Process incoming Message
+    /**
+     * Handles message interpretation. Calls {@link #printMessage()} to print result.
+     * @param message - incoming server message
+     * @return TRUE - if message type was recognised ({@link ServerResponse}). FALSE - otherwise.
+     */
     public boolean processMessage(String message) {
         LOGGER.fine("[ProcessMessage starting]");
         String[] parts = message.split(" ", 3);
@@ -179,8 +231,12 @@ public class ChatClient {
         return true;
     }
 
-    // Método invocado sempre que o utilizador insere uma mensagem
-    // na caixa de entrada
+    /** Sends messages to the server.
+     * Called when the client enters a new line in the input field and sends this input to the server.
+     * Appends a {@code'/'} to the start of a message if user starts the message with a {@code'/'}
+     * without using a {@link ServerCommand} string.
+     * @param message - String received from the text field.
+     */
     public void sendMessage(String message) {
         if (message.equals("")) {
             LOGGER.info("Message is empty");
@@ -196,7 +252,7 @@ public class ChatClient {
                 case ServerCommand.NICK:
                     printMessage("Changing nickname to " + parts[1] + "...", 2);
                     LOGGER.info("New outgoing message: {" + message + "}");
-                    this.outputWriter.println(message); // has autoflush
+                    this.outputWriter.println(message);
                     askedNickname = parts[1];
                     lastNickCmd = true;
                     break;
@@ -234,6 +290,9 @@ public class ChatClient {
         }
     }
 
+    /** 
+     * Closes the network socket connection.
+     */
     public void closeSocket() {
         try {
             this.socket.close();
@@ -242,6 +301,9 @@ public class ChatClient {
         }
     }
 
+    /**
+     * Disables client UI.
+     */
     private void closeChat() {
         SwingUtilities.invokeLater(() -> {
             chatBox.setEditable(false);
@@ -252,6 +314,9 @@ public class ChatClient {
         });
     }
 
+    /**
+     * Creates another Thread that listens for messages from the server.
+     */
     public void run() {
         LOGGER.fine("ServerListener start");
 
@@ -285,7 +350,18 @@ public class ChatClient {
         serverListener.start();
     }
 
-    // Instancia o ChatClient e arranca-o invocando o seu método run()
+    /**
+     * Entry point for the client application.
+     * Instantiates and starts the client using {@link #run()}.
+     * If received command-line arguments are given, 
+     * the client will be connected to the server "{@link #DEFAULT_SERVER}:{@link #DEFAULT_PORT}"
+     * <p>
+     * <b>Usage:</b>
+     * <p>
+     * $ java ChatClient.java localhost 8000
+     * @param args
+     * @throws IOException
+     */
     public static void main(String[] args) throws IOException {
         System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s [%2$s] %5$s%n");
 
