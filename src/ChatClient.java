@@ -52,7 +52,7 @@ public class ChatClient {
      * Simple server client for a text based messaging system.
      * @param hostName - server domain.
      * @param port - port number for socket connection
-     * @throws IOException
+     * @throws IOException - if socket could not be created
      */
     public ChatClient(String hostName, int port) throws IOException {
         try {
@@ -174,7 +174,7 @@ public class ChatClient {
     }
 
     /**
-     * Handles message interpretation. Calls {@link #printMessage()} to print result.
+     * Handles message interpretation. Calls {@link ChatClient#printMessage(String, int)} to print result.
      * @param message - incoming server message
      * @return TRUE - if message type was recognised ({@link ServerResponse}). FALSE - otherwise.
      */
@@ -359,8 +359,8 @@ public class ChatClient {
      * <b>Usage:</b>
      * <p>
      * $ java ChatClient.java localhost 8000
-     * @param args
-     * @throws IOException
+     * @param args - [(hostName), (portNumber)]
+     * @throws IOException - IO error thrown by ChatClient
      */
     public static void main(String[] args) throws IOException {
         System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s [%2$s] %5$s%n");
