@@ -1,3 +1,0 @@
-/nick newuser
-/join sala
-Bom dia!

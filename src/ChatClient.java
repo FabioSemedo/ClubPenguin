@@ -7,21 +7,27 @@ import javax.swing.*;
 import javax.swing.text.*;
 
 /**
- * A Swing-based client for the chat application that communicates with a remote 
+ * A Swing-based client for the chat application that communicates with a remote
  * server via TCP sockets.
  * <p>
  * This client provides a Graphical User Interface (GUI) for users to:
  * <ul>
  * <li>Connect to a ChatServer using a hostname and port.</li>
  * <li>Send public and private messages.</li>
- * <li>Execute commands such as {@code /nick}, {@code /join}, and {@code /leave}.</li>
+ * <li>Execute commands such as {@code /nick}, {@code /join}, and
+ * {@code /leave}.</li>
  * <li>View real-time chat history formatted with color-coded alignment.</li>
  * </ul>
  * <p>
- * The client runs on two main threads: the Swing Event Dispatch Thread (EDT) for 
- * UI updates and a separate listener thread for reading incoming server messages.
+ * The client runs on two main threads: the Swing Event Dispatch Thread (EDT)
+ * for
+ * UI updates and a separate listener thread for reading incoming server
+ * messages.
  *
- * <p><b>Usage:</b></p>
+ * <p>
+ * <b>Usage:</b>
+ * </p>
+ * 
  * <pre>
  * // Run with default localhost:8000
  * java ChatClient
@@ -48,10 +54,11 @@ public class ChatClient {
     private String askedNickname = "";
     private boolean lastNickCmd = false;
 
-    /** 
+    /**
      * Simple server client for a text based messaging system.
+     * 
      * @param hostName - server domain.
-     * @param port - port number for socket connection
+     * @param port     - port number for socket connection
      * @throws IOException
      */
     public ChatClient(String hostName, int port) throws IOException {
@@ -71,8 +78,9 @@ public class ChatClient {
 
     /**
      * Prints a message to the Chat Text Area in the client's UI.
+     * 
      * @param message - Text to be displayed
-     * @param i - Defines text alignment. 1 = left, 2 = center, 3 = right.
+     * @param i       - Defines text alignment. 1 = left, 2 = center, 3 = right.
      */
     public void printMessage(final String message, int i) {
         switch (i) {
@@ -93,9 +101,11 @@ public class ChatClient {
 
     /**
      * Prints a message to the Chat Text Area with dedicated formatting.
-     * @param msg - message
-     * @param alignment - Defines text alignment with a StyleConstants alignment value.
-     *  0 = left, 1 = center, 2 = right.
+     * 
+     * @param msg       - message
+     * @param alignment - Defines text alignment with a StyleConstants alignment
+     *                  value.
+     *                  0 = left, 1 = center, 2 = right.
      */
     private void appendToPane(String msg, int alignment) {
         StyledDocument doc = chatArea.getStyledDocument();
@@ -157,6 +167,7 @@ public class ChatClient {
 
     /**
      * Read incoming Message in the {@link #inputBuffer}
+     * 
      * @return The oldest message in buffer. Or null if an IO exception is thrown.
      */
     public String readMessage() {
@@ -174,9 +185,12 @@ public class ChatClient {
     }
 
     /**
-     * Handles message interpretation. Calls {@link #printMessage()} to print result.
+     * Handles message interpretation. Calls {@link #printMessage()} to print
+     * result.
+     * 
      * @param message - incoming server message
-     * @return TRUE - if message type was recognised ({@link ServerResponse}). FALSE - otherwise.
+     * @return TRUE - if message type was recognised ({@link ServerResponse}). FALSE
+     *         - otherwise.
      */
     public boolean processMessage(String message) {
         LOGGER.fine("[ProcessMessage starting]");
@@ -216,7 +230,7 @@ public class ChatClient {
                 break;
             case ServerResponse.BYE:
                 // é pra fechar a interface?
-                printMessage("You have quit the chat.", 2);
+                printMessage("you have quit the chat.", 2);
                 LOGGER.info("Server returned BYE");
                 return false;
             case ServerResponse.PRIVATE:
@@ -231,10 +245,14 @@ public class ChatClient {
         return true;
     }
 
-    /** Sends messages to the server.
-     * Called when the client enters a new line in the input field and sends this input to the server.
-     * Appends a {@code'/'} to the start of a message if user starts the message with a {@code'/'}
+    /**
+     * Sends messages to the server.
+     * Called when the client enters a new line in the input field and sends this
+     * input to the server.
+     * Appends a {@code'/'} to the start of a message if user starts the message
+     * with a {@code'/'}
      * without using a {@link ServerCommand} string.
+     * 
      * @param message - String received from the text field.
      */
     public void sendMessage(String message) {
@@ -290,7 +308,7 @@ public class ChatClient {
         }
     }
 
-    /** 
+    /**
      * Closes the network socket connection.
      */
     public void closeSocket() {
@@ -353,12 +371,14 @@ public class ChatClient {
     /**
      * Entry point for the client application.
      * Instantiates and starts the client using {@link #run()}.
-     * If received command-line arguments are given, 
-     * the client will be connected to the server "{@link #DEFAULT_SERVER}:{@link #DEFAULT_PORT}"
+     * If received command-line arguments are given,
+     * the client will be connected to the server
+     * "{@link #DEFAULT_SERVER}:{@link #DEFAULT_PORT}"
      * <p>
      * <b>Usage:</b>
      * <p>
      * $ java ChatClient.java localhost 8000
+     * 
      * @param args
      * @throws IOException
      */
